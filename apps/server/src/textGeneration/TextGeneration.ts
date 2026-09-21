@@ -20,6 +20,8 @@ export interface CommitMessageGenerationInput {
   policy?: TextGenerationPolicy | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
+  /** Tried once when `modelSelection` fails. Absent means no fallback. */
+  fallbackModelSelection?: ModelSelection | undefined;
 }
 
 export interface CommitMessageGenerationResult {
@@ -40,6 +42,8 @@ export interface PrContentGenerationInput {
   policy?: TextGenerationPolicy | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
+  /** Tried once when `modelSelection` fails. Absent means no fallback. */
+  fallbackModelSelection?: ModelSelection | undefined;
 }
 
 export interface PrContentGenerationResult {
@@ -53,6 +57,8 @@ export interface BranchNameGenerationInput {
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
+  /** Tried once when `modelSelection` fails. Absent means no fallback. */
+  fallbackModelSelection?: ModelSelection | undefined;
 }
 
 export interface BranchNameGenerationResult {
@@ -68,6 +74,8 @@ export interface ThreadTitleGenerationInput {
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
+  /** Tried once when `modelSelection` fails. Absent means no fallback. */
+  fallbackModelSelection?: ModelSelection | undefined;
 }
 
 export interface ThreadTitleGenerationResult {
@@ -137,35 +145,84 @@ const resolveInstance = (
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+
+  /**
+   * Runs `run` against the primary model, then once more against the fallback
+   * if the primary fails for any reason. A fallback that resolves to the same
+   * instance and model as the primary is ignored, as is an absent one, so
+   * callers that pass nothing behave exactly as they did without a fallback.
+   */
+  const runWithFallback = <A>(
+    operation: TextGenerationOp,
+    input: {
+      readonly modelSelection: ModelSelection;
+      readonly fallbackModelSelection?: ModelSelection | undefined;
+    },
+    run: (
+      textGeneration: ProviderInstance["textGeneration"],
+      modelSelection: ModelSelection,
+    ) => Effect.Effect<A, TextGenerationError>,
+  ): Effect.Effect<A, TextGenerationError> => {
+    const primary = input.modelSelection;
+    const attempt = (selection: ModelSelection) =>
+      resolveInstance(registry, operation, selection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => run(textGeneration, selection)),
+      );
+
+    const fallback = input.fallbackModelSelection;
+    if (
+      !fallback ||
+      (fallback.instanceId === primary.instanceId && fallback.model === primary.model)
+    ) {
+      return attempt(primary);
+    }
+
+    return attempt(primary).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("text generation primary model failed, trying fallback", {
+          operation,
+          primaryInstanceId: primary.instanceId,
+          primaryModel: primary.model,
+          fallbackInstanceId: fallback.instanceId,
+          fallbackModel: fallback.model,
+          detail: error.detail,
+        }).pipe(Effect.flatMap(() => attempt(fallback))),
+      ),
+    );
+  };
+
   return TextGeneration.of({
     generateCommitMessage: (input) =>
-      resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
+      runWithFallback("generateCommitMessage", input, (textGeneration, modelSelection) =>
+        textGeneration.generateCommitMessage({ ...input, modelSelection }),
       ),
     generatePrContent: (input) =>
-      resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
+      runWithFallback("generatePrContent", input, (textGeneration, modelSelection) =>
+        textGeneration.generatePrContent({ ...input, modelSelection }),
       ),
     generateBranchName: (input) =>
-      resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
+      runWithFallback("generateBranchName", input, (textGeneration, modelSelection) =>
+        textGeneration.generateBranchName({ ...input, modelSelection }),
       ),
     generateThreadTitle: (input) =>
-      resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) =>
-          Effect.gen(function* () {
-            const linkedContext =
-              input.linkedContext ??
-              (yield* ThreadTitleLinks.resolveThreadTitleLinks(input).pipe(
-                Effect.provideService(
-                  SourceControlProviderRegistry.SourceControlProviderRegistry,
-                  sourceControl,
-                ),
-              ));
-            return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
-          }),
-        ),
-      ),
+      Effect.gen(function* () {
+        // Resolved once so the fallback attempt does not redo the
+        // source-control lookup.
+        const linkedContext =
+          input.linkedContext ??
+          (yield* ThreadTitleLinks.resolveThreadTitleLinks(input).pipe(
+            Effect.provideService(
+              SourceControlProviderRegistry.SourceControlProviderRegistry,
+              sourceControl,
+            ),
+          ));
+        return yield* runWithFallback(
+          "generateThreadTitle",
+          input,
+          (textGeneration, modelSelection) =>
+            textGeneration.generateThreadTitle({ ...input, linkedContext, modelSelection }),
+        );
+      }),
   });
 });
 

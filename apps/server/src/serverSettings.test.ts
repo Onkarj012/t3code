@@ -520,6 +520,68 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("round-trips and clears the text generation fallback selection", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_backup");
+      const textGenerationFallbackModelSelection = { instanceId, model: "gpt-5.4-mini" };
+
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+            config: {},
+          },
+        },
+        textGenerationFallbackModelSelection,
+      });
+
+      assert.deepEqual(
+        next.textGenerationFallbackModelSelection,
+        textGenerationFallbackModelSelection,
+      );
+      assert.deepEqual(
+        ServerSettingsModule.resolveTextGenerationFallbackModelSelection(next),
+        textGenerationFallbackModelSelection,
+      );
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.deepEqual(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.parse(raw).textGenerationFallbackModelSelection,
+        textGenerationFallbackModelSelection,
+      );
+
+      // A disabled instance leaves the stored value alone but resolves to no fallback.
+      const disabled = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+            config: {},
+          },
+        },
+      });
+      assert.deepEqual(
+        disabled.textGenerationFallbackModelSelection,
+        textGenerationFallbackModelSelection,
+      );
+      assert.equal(
+        ServerSettingsModule.resolveTextGenerationFallbackModelSelection(disabled),
+        null,
+      );
+
+      const cleared = yield* serverSettings.updateSettings({
+        textGenerationFallbackModelSelection: null,
+      });
+      assert.equal(cleared.textGenerationFallbackModelSelection, null);
+      assert.equal((yield* serverSettings.getSettings).textGenerationFallbackModelSelection, null);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("drops stale text generation options when resetting model selection", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

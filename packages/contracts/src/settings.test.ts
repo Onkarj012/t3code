@@ -811,6 +811,25 @@ describe("ServerSettings.sourceControlWritingStyle", () => {
     expect(settings.sourceControlWriterModelSelection).toBeNull();
   });
 
+  it("leaves the text generation fallback model off by default", () => {
+    expect(decodeServerSettings({}).textGenerationFallbackModelSelection).toBeNull();
+  });
+
+  it("accepts a whole text generation fallback selection in a patch", () => {
+    const patch = decodeServerSettingsPatch({
+      textGenerationFallbackModelSelection: { instanceId: "codex_backup", model: "gpt-5-mini" },
+    });
+
+    expect(patch.textGenerationFallbackModelSelection).toEqual({
+      instanceId: "codex_backup",
+      model: "gpt-5-mini",
+    });
+    expect(
+      decodeServerSettingsPatch({ textGenerationFallbackModelSelection: null })
+        .textGenerationFallbackModelSelection,
+    ).toBeNull();
+  });
+
   it("trims partial style updates", () => {
     const patch = decodeServerSettingsPatch({
       sourceControlWritingStyle: {

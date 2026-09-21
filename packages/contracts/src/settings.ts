@@ -999,6 +999,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "enableAgentBrowserAccess",
   "enableAgentDeviceAccess",
   "textGenerationModelSelection",
+  "textGenerationFallbackModelSelection",
   "sourceControlWriterModelSelection",
   "sourceControlWritingStyle",
   "pullRequestMergeMethod",
@@ -1025,6 +1026,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
+  textGenerationFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
@@ -1190,6 +1192,13 @@ export const ServerSettings = Schema.Struct({
         ],
       }),
     ),
+  ),
+  /**
+   * Tried once when `textGenerationModelSelection` fails, including when its
+   * provider hits a usage limit. `null` means no fallback.
+   */
+  textGenerationFallbackModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1469,6 +1478,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  textGenerationFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
       mode: Schema.optionalKey(SourceControlWritingStyleMode),

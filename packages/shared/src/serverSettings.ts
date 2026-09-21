@@ -99,6 +99,34 @@ export function resolveSourceControlWriterModelSelection(
     : settings.textGenerationModelSelection;
 }
 
+/**
+ * The model tried once when the primary text generation model fails.
+ * `null` when there is no usable fallback: the setting is off, its provider is
+ * disabled or unavailable, or it points at the same instance and model as the
+ * primary (retrying the identical model is not a fallback).
+ */
+export function resolveTextGenerationFallbackModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection | null {
+  const selection = settings.textGenerationFallbackModelSelection;
+  if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
+    return null;
+  }
+
+  const primary = settings.textGenerationModelSelection;
+  if (selection.instanceId === primary.instanceId && selection.model === primary.model) {
+    return null;
+  }
+
+  if (providers === undefined) {
+    return selection;
+  }
+
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  return provider?.enabled === true && isProviderAvailable(provider) ? selection : null;
+}
+
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
@@ -393,6 +421,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
+      : {}),
+    ...(patch.textGenerationFallbackModelSelection !== undefined
+      ? { textGenerationFallbackModelSelection: patch.textGenerationFallbackModelSelection }
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),

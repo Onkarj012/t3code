@@ -5,7 +5,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -174,6 +174,138 @@ describe("TextGeneration.make", () => {
         expect(result.failure.operation).toBe("generateBranchName");
         expect(result.failure.detail).toContain("missing_instance");
       }
+    }),
+  );
+});
+
+describe("TextGeneration fallback model", () => {
+  const primaryId = ProviderInstanceId.make("codex_primary");
+  const fallbackId = ProviderInstanceId.make("codex_fallback");
+
+  const makeService = (instances: ReadonlyArray<ProviderInstance>) =>
+    TextGeneration.make.pipe(
+      Effect.provideService(
+        ProviderInstanceRegistry.ProviderInstanceRegistry,
+        makeStubRegistry(instances),
+      ),
+      Effect.provide(
+        Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+          resolveLink: () => Effect.die("No link lookup expected"),
+        }),
+      ),
+    );
+
+  const failingBranchName = (instanceId: ProviderInstanceId, calls: string[]) =>
+    makeStubInstance(
+      instanceId,
+      makeStubTextGeneration({
+        generateBranchName: () => {
+          calls.push(instanceId);
+          return Effect.fail(
+            new TextGenerationError({
+              operation: "generateBranchName",
+              detail: `${instanceId} is out of quota`,
+            }),
+          );
+        },
+      }),
+    );
+
+  it.effect("runs the fallback instance when the primary fails", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const fallback = makeStubInstance(
+        fallbackId,
+        makeStubTextGeneration({
+          generateBranchName: (input) => {
+            calls.push(input.modelSelection.instanceId);
+            return Effect.succeed({ branch: "fallback-branch" });
+          },
+        }),
+      );
+
+      const tg = yield* makeService([failingBranchName(primaryId, calls), fallback]);
+      const result = yield* tg.generateBranchName({
+        cwd: process.cwd(),
+        message: "Refactor routing",
+        modelSelection: createModelSelection(primaryId, "gpt-5"),
+        fallbackModelSelection: createModelSelection(fallbackId, "gpt-5-mini"),
+      });
+
+      expect(result.branch).toBe("fallback-branch");
+      expect(calls).toEqual([primaryId, fallbackId]);
+    }),
+  );
+
+  it.effect("never invokes the fallback when the primary succeeds", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const primary = makeStubInstance(
+        primaryId,
+        makeStubTextGeneration({
+          generateBranchName: () => {
+            calls.push(primaryId);
+            return Effect.succeed({ branch: "primary-branch" });
+          },
+        }),
+      );
+      const fallback = makeStubInstance(
+        fallbackId,
+        makeStubTextGeneration({
+          generateBranchName: () => Effect.die("Fallback must not run"),
+        }),
+      );
+
+      const tg = yield* makeService([primary, fallback]);
+      const result = yield* tg.generateBranchName({
+        cwd: process.cwd(),
+        message: "Refactor routing",
+        modelSelection: createModelSelection(primaryId, "gpt-5"),
+        fallbackModelSelection: createModelSelection(fallbackId, "gpt-5-mini"),
+      });
+
+      expect(result.branch).toBe("primary-branch");
+      expect(calls).toEqual([primaryId]);
+    }),
+  );
+
+  it.effect("propagates the primary error when no fallback is set", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const tg = yield* makeService([failingBranchName(primaryId, calls)]);
+
+      const result = yield* tg
+        .generateBranchName({
+          cwd: process.cwd(),
+          message: "Refactor routing",
+          modelSelection: createModelSelection(primaryId, "gpt-5"),
+        })
+        .pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure.detail).toContain("codex_primary is out of quota");
+      }
+      expect(calls).toEqual([primaryId]);
+    }),
+  );
+
+  it.effect("attempts once when the fallback matches the primary instance and model", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const tg = yield* makeService([failingBranchName(primaryId, calls)]);
+
+      const result = yield* tg
+        .generateBranchName({
+          cwd: process.cwd(),
+          message: "Refactor routing",
+          modelSelection: createModelSelection(primaryId, "gpt-5"),
+          fallbackModelSelection: createModelSelection(primaryId, "gpt-5"),
+        })
+        .pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      expect(calls).toEqual([primaryId]);
     }),
   );
 });

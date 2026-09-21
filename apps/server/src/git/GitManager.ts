@@ -94,6 +94,8 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
 
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
+  /** Tried once when `modelSelection` fails. Absent means no fallback. */
+  readonly fallbackModelSelection?: ModelSelection | undefined;
   readonly style: SourceControlWritingStyleSettings;
 }
 
@@ -1844,6 +1846,9 @@ export const make = Effect.gen(function* () {
           ...(input.includeBranch ? { includeBranch: true } : {}),
           ...(policy ? { policy } : {}),
           modelSelection: input.settings.modelSelection,
+          ...(input.settings.fallbackModelSelection
+            ? { fallbackModelSelection: input.settings.fallbackModelSelection }
+            : {}),
         })
         .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
 
@@ -2035,6 +2040,9 @@ export const make = Effect.gen(function* () {
       ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
       ...(policy ? { policy } : {}),
       modelSelection: settings.modelSelection,
+      ...(settings.fallbackModelSelection
+        ? { fallbackModelSelection: settings.fallbackModelSelection }
+        : {}),
     });
 
     const bodyFile = path.join(
@@ -2664,20 +2672,23 @@ export const make = Effect.gen(function* () {
 
         const textGenerationSettings = yield* projectSettingsFor(input).pipe(
           Effect.flatMap((settings) =>
-            settings.sourceControlWriterModelSelection === null
-              ? Effect.succeed({
-                  modelSelection: settings.textGenerationModelSelection,
+            providerRegistry.getProviders.pipe(
+              Effect.map((providers): SourceControlTextGenerationSettings => {
+                const fallbackModelSelection =
+                  ServerSettings.resolveTextGenerationFallbackModelSelection(settings, providers);
+                return {
+                  modelSelection:
+                    settings.sourceControlWriterModelSelection === null
+                      ? settings.textGenerationModelSelection
+                      : ServerSettings.resolveSourceControlWriterModelSelection(
+                          settings,
+                          providers,
+                        ),
+                  ...(fallbackModelSelection ? { fallbackModelSelection } : {}),
                   style: settings.sourceControlWritingStyle,
-                })
-              : providerRegistry.getProviders.pipe(
-                  Effect.map((providers) => ({
-                    modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
-                      settings,
-                      providers,
-                    ),
-                    style: settings.sourceControlWritingStyle,
-                  })),
-                ),
+                };
+              }),
+            ),
           ),
           Effect.mapError(
             (cause) =>
