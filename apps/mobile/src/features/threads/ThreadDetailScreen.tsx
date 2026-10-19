@@ -59,7 +59,6 @@ import {
   AppState,
   Keyboard,
   Platform,
-  TextInput,
   useWindowDimensions,
   View,
   type GestureResponderEvent,
@@ -358,14 +357,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   // translation on visibility alone still strands the composer after resume. An input that kept
   // focus through the switch is exempt: Android restores its keyboard unchanged, so no keyboard
   // or focus event would ever lift the quarantine. Hiding the keyboard with Back keeps focus, so
-  // Back then Home mid-hide takes the exemption and can still strand the composer. A screen opened
-  // after such a resume sees the same frozen state, so it starts suspect when no input is focused.
-  const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(
-    () =>
-      Platform.OS === "android" &&
-      isKeyboardVisible &&
-      TextInput.State.currentlyFocusedInput() == null,
-  );
+  // Back then Home mid-hide takes the exemption and can still strand the composer.
+  const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(false);
   const ownedInputFocusedRef = useRef(false);
   useEffect(() => {
     if (Platform.OS !== "android") {
@@ -380,17 +373,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       subscription.remove();
     };
   }, []);
-  const lastKeyboardStateRef = useRef({ isKeyboardVisible, liveKeyboardHeight });
   useEffect(() => {
-    const last = lastKeyboardStateRef.current;
-    // Only a real keyboard change lifts the quarantine; the mount run would clear it unseen.
-    if (
-      last.isKeyboardVisible === isKeyboardVisible &&
-      last.liveKeyboardHeight === liveKeyboardHeight
-    ) {
-      return;
-    }
-    lastKeyboardStateRef.current = { isKeyboardVisible, liveKeyboardHeight };
     setKeyboardStateSuspect(false);
   }, [isKeyboardVisible, liveKeyboardHeight]);
   const handleOwnedInputFocusChange = (focused: boolean) => {

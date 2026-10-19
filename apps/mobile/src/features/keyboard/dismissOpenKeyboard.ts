@@ -1,10 +1,10 @@
-import { Keyboard, TextInput } from "react-native";
+import { KeyboardController } from "react-native-keyboard-controller";
 
 // Dismisses the soft keyboard when one is really open; returns whether it did.
 export function dismissOpenKeyboard(): boolean {
-  // Keyboard.isVisible() is cached from show/hide events, and Android can drop the hide event when
-  // the app is backgrounded mid-hide, leaving it true for good. A focused input confirms it.
-  if (!Keyboard.isVisible() || TextInput.State.currentlyFocusedInput() == null) return false;
-  Keyboard.dismiss();
+  // RN's Keyboard and TextInputState miss the chat composer, a custom native EditText. The
+  // keyboard controller tracks the IME natively and resyncs on resume, so it sees the composer.
+  if (!KeyboardController.isVisible()) return false;
+  void KeyboardController.dismiss();
   return true;
 }
