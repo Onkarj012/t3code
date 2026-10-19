@@ -8,6 +8,7 @@ import {
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { SearchField } from "../../components/ui/SearchField";
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
+import { dismissOpenKeyboard } from "../keyboard/dismissOpenKeyboard";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
@@ -51,8 +52,7 @@ export function PullRequestToolbar(props: {
       const state = navigation.getState();
       if (!state || state.routes[state.index]?.name !== "Home" || !isTabActive("pullRequests"))
         return false;
-      if (Keyboard.isVisible()) Keyboard.dismiss();
-      else closeSearch();
+      if (!dismissOpenKeyboard()) closeSearch();
       return true;
     });
     return () => subscription.remove();
