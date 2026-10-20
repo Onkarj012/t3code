@@ -31,7 +31,7 @@ vi.mock("../state/projectClones", () => ({
 }));
 
 vi.mock("../state/projects", () => ({
-  projectEnvironment: { readFile: () => "read-file", writeFile: mocks.writeFile },
+  projectEnvironment: { readFile: (args: unknown) => args, writeFile: mocks.writeFile },
 }));
 
 vi.mock("../state/sourceControl", () => ({
@@ -44,6 +44,16 @@ import { addProjectToMachine } from "./addProjectToMachine";
 
 const environmentId = EnvironmentId.make("target");
 const projectId = ProjectId.make("project-1");
+
+const startInput = {
+  source: { environmentId: EnvironmentId.make("source"), cwd: "/src/app" },
+  subdirectory: "",
+  target: { environmentId, label: "Laptop" },
+  projectId,
+  title: "app",
+  remoteUrl: "git@github.com:acme/app.git",
+  destinationPath: "/work/app",
+};
 
 function runningClone(): ProjectCloneSnapshot {
   return {
@@ -81,16 +91,7 @@ describe("addProjectToMachine", () => {
     });
     mocks.readProject.mockReturnValue({ id: projectId });
 
-    await addProjectToMachine({
-      source: { environmentId: EnvironmentId.make("source"), cwd: "/src/app" },
-      subdirectory: "",
-      target: { environmentId, label: "Laptop" },
-      projectId,
-      title: "app",
-      remoteUrl: "git@github.com:acme/app.git",
-      destinationPath: "/work/app",
-      files: [".env.local"],
-    });
+    await addProjectToMachine({ ...startInput, files: [".env.local"] });
     appAtomRegistry.set(clonesAtom, [runningClone()]);
     // A reconnect after the server's retention window lists no record at all.
     appAtomRegistry.set(clonesAtom, []);
@@ -99,5 +100,41 @@ describe("addProjectToMachine", () => {
       environmentId,
       input: { cwd: "/work/app", relativePath: ".env.local", contents: "KEY=value\n" },
     });
+  });
+
+  it("refuses to copy a file the server could not decode as UTF-8", async () => {
+    const writes: Array<unknown> = [];
+    let wroteLast: () => void = () => undefined;
+    const lastWritten = new Promise<void>((resolve) => {
+      wroteLast = resolve;
+    });
+    mocks.executeAtomQuery.mockImplementation(
+      async (_registry, query: { readonly input: { readonly relativePath: string } }) => ({
+        _tag: "Success",
+        // `NAME=caf\xe9` read from a Latin-1 file comes back with U+FFFD.
+        value: {
+          contents: query.input.relativePath === ".env.latin1" ? "NAME=caf\uFFFD\n" : "KEY=value\n",
+          truncated: false,
+        },
+      }),
+    );
+    mocks.runAtomCommand.mockImplementation(async (_registry, command, args) => {
+      if (command === mocks.startProjectClone) {
+        return { _tag: "Success", value: { cwd: "/work/app" } };
+      }
+      if (command === mocks.writeFile) {
+        writes.push(args);
+        wroteLast();
+      }
+      return { _tag: "Success", value: undefined };
+    });
+
+    await addProjectToMachine({ ...startInput, files: [".env.latin1", ".env"] });
+    appAtomRegistry.set(clonesAtom, [{ ...runningClone(), phase: "done" }]);
+    await lastWritten;
+
+    expect(writes).toEqual([
+      expect.objectContaining({ input: expect.objectContaining({ relativePath: ".env" }) }),
+    ]);
   });
 });

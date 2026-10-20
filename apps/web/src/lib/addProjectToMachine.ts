@@ -162,6 +162,11 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
       );
       if (result._tag === "Failure") return { relativePath, error: failureMessage(result) };
       if (result.value.truncated) return { relativePath, error: "Too large to copy." };
+      // The server decodes reads as UTF-8 and swaps undecodable bytes for U+FFFD,
+      // so writing these contents back would silently corrupt the file.
+      if (result.value.contents.includes("�")) {
+        return { relativePath, error: "Not UTF-8 text, so it can't be copied." };
+      }
       return { relativePath, contents: result.value.contents };
     }),
   );
