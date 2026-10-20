@@ -20,7 +20,12 @@ const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 type ExecFileSyncLike = (
   file: string,
   args: ReadonlyArray<string>,
-  options: { encoding: "utf8"; timeout: number },
+  options: {
+    encoding: "utf8";
+    timeout: number;
+    detached?: true;
+    stdio?: ["ignore", "pipe", "ignore"];
+  },
 ) => string;
 
 function canExecuteFile(filePath: string): boolean {
@@ -268,9 +273,13 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     return {};
   }
 
+  // Interactive startup loads PATH entries; detaching prevents job control on an
+  // inherited controlling TTY from stopping the probe while the parent waits.
   const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
     encoding: "utf8",
     timeout: 5000,
+    detached: true,
+    stdio: ["ignore", "pipe", "ignore"],
   });
 
   const environment: Partial<Record<string, string>> = {};
@@ -502,8 +511,9 @@ const PathDirectoryListings = Context.Reference<
   Cache.Cache<string, PathDirectoryListing, never, FileSystem.FileSystem> | undefined
 >("@t3tools/shared/shell/PathDirectoryListings", { defaultValue: () => undefined });
 
-export const withPathDirectoryListings = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
+export const withPathDirectoryListings =
+  /* Directory reads are cached inside one shell operation; a span for each lookup adds noise. */
+  Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
     const listings = yield* Cache.make({
       capacity: 1024,
       lookup: listPathDirectory,

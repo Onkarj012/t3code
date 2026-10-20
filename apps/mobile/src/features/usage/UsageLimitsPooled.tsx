@@ -9,6 +9,7 @@ import {
   cursorUsageWindowDetails,
   displayLimitWindows,
   formatResetsIn,
+  paceRemainingPercent,
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
@@ -43,11 +44,11 @@ function accountName(account: LimitAccount) {
 function AccountSegment({
   remaining,
   color,
-  pending,
+  refillPercent,
 }: {
   readonly remaining: number;
   readonly color: string;
-  readonly pending: boolean;
+  readonly refillPercent: number;
 }) {
   const patternId = useId().replace(/:/g, "");
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -70,10 +71,10 @@ function AccountSegment({
               <Path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" stroke={color} strokeWidth={1} opacity={0.22} />
             </Pattern>
           </Defs>
-          {pending ? (
+          {refillPercent > 0 ? (
             <Rect
-              x={`${remaining}%`}
-              width={`${100 - remaining}%`}
+              x={`${100 - Math.min(100 - remaining, refillPercent)}%`}
+              width={`${Math.min(100 - remaining, refillPercent)}%`}
               height="100%"
               fill={`url(#${patternId})`}
             />
@@ -142,24 +143,42 @@ function PoolWindowCard({
         </Text>
       ) : null}
       <View className="flex-row gap-1">
-        {pool.columns.map(({ account, window }, index) => {
-          if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
+        {pool.columns.map((member, index) => {
+          if (!member.window)
+            return <View key={member.account.key} className="h-7 min-w-0 flex-1" />;
+          const { account, window } = member;
+          const timeLeft = paceRemainingPercent(window, now);
           return (
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
+              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
-              className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
+              className="h-7 min-w-0 flex-1 rounded-md bg-subtle"
             >
-              <AccountSegment
-                remaining={remainingPercent(window)}
-                color={color}
-                pending={Boolean(window.resetsAt)}
-              />
-              <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-                <Text className="text-xs font-t3-medium tabular-nums text-foreground">
+              <View className="absolute inset-0 overflow-hidden rounded-md">
+                <AccountSegment
+                  remaining={remainingPercent(window)}
+                  color={color}
+                  refillPercent={window.resetsAt ? member.refillPercent : 0}
+                />
+              </View>
+              {timeLeft !== null ? (
+                <View
+                  pointerEvents="none"
+                  className="absolute -top-1 -bottom-1 w-0.5 -translate-x-px rounded-full bg-foreground-muted"
+                  style={{ left: `${timeLeft}%` }}
+                />
+              ) : null}
+              <View
+                pointerEvents="none"
+                className="absolute inset-0 items-center justify-center overflow-hidden rounded-md"
+              >
+                <Text
+                  numberOfLines={1}
+                  className="max-w-full shrink text-xs font-t3-medium tabular-nums text-foreground"
+                >
                   {index + 1}
                 </Text>
               </View>
@@ -368,6 +387,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     .find((candidate) => candidate.driver === account?.driver)
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
+  const evenPace = window ? paceRemainingPercent(window, now) : null;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
   return (
@@ -420,6 +440,11 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                     dateStyle: "medium",
                     timeStyle: "short",
                   })}
+                </Text>
+              ) : null}
+              {evenPace !== null ? (
+                <Text className="text-sm text-foreground-muted">
+                  Even pace: {evenPace}% left by now
                 </Text>
               ) : null}
               {reset && reset.restoresPercent > 0 ? (

@@ -52,6 +52,7 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
       provider: "claude",
       records,
       tailRecords: [],
+      malformedRecords: 0,
       position: position(),
     });
   }
@@ -59,27 +60,46 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 }
 
 describe("scan cache round trip", () => {
-  it("restores records unchanged", () => {
+  it("restores cached history unchanged except for Claude local placeholders", () => {
     const original = cacheWith([
       [
         "/a.jsonl",
         100,
         [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", speed: "fast" })],
       ],
-      ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
+      [
+        "/b.jsonl",
+        200,
+        [
+          record({
+            sessionId: "session-b",
+            reportedCostUsd: 1.5,
+            totals: {
+              uncachedInputTokens: 0,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+              outputTokens: 0,
+              reasoningTokens: 0,
+            },
+          }),
+        ],
+      ],
     ]);
     original.set("/grok.jsonl", {
       size: 40,
+      malformedRecords: 2,
       mtimeMs: 300,
       provider: "grok",
       records: [
         record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
+        record({ provider: "grok", model: "<synthetic>", dedupeKey: "s:p:<synthetic>" }),
       ],
-      tailRecords: [record({ provider: "grok", model: "grok-4.5-build", dedupeKey: null })],
+      tailRecords: [record({ provider: "grok", model: "<synthetic>", dedupeKey: null })],
       position: position({ resumeOffset: 30, guardLength: 30, guardHash: 123 }),
     });
     original.set("/codex.jsonl", {
       size: 80,
+      malformedRecords: 3,
       mtimeMs: 400,
       provider: "codex",
       records: [
@@ -99,16 +119,52 @@ describe("scan cache round trip", () => {
       }),
     });
 
+    original.set("/a.jsonl", {
+      ...original.get("/a.jsonl")!,
+      tailRecords: [record({ dedupeKey: "msg_tail:" })],
+    });
+    const claude = original.get("/a.jsonl")!;
+    const cached = new Map(original);
+    cached.set("/a.jsonl", {
+      ...claude,
+      records: [...claude.records, record({ model: "<synthetic>" })],
+      tailRecords: [
+        ...claude.tailRecords,
+        record({ model: "<synthetic>", dedupeKey: "msg_tail:" }),
+      ],
+    });
     const restored = decodeScanCache(
-      JSON.parse(JSON.stringify(encodeScanCache(original))),
+      JSON.parse(JSON.stringify(encodeScanCache(cached))),
       TEST_FORMAT_MAP,
     );
 
     expect(restored.size).toBe(4);
-    expect(restored.get("/a.jsonl")).toEqual(original.get("/a.jsonl"));
-    expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
-    expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
-    expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
+    expect(restored).toEqual(original);
+  });
+
+  it("defaults missing v5 diagnostic counts to zero without losing cached records", () => {
+    const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
+    const encoded = encodeScanCache(original);
+    const entry = encoded.files["/gone.jsonl"]!;
+    const legacy = {
+      ...encoded,
+      version: 5,
+      files: {
+        "/gone.jsonl": {
+          s: entry.s,
+          m: entry.m,
+          p: entry.p,
+          r: entry.r,
+          t: entry.t,
+          o: entry.o,
+          gl: entry.gl,
+          gh: entry.gh,
+          cs: entry.cs,
+        },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP)).toEqual(original);
   });
 
   it("drops an entry whose persisted parse state is corrupt", () => {
@@ -163,12 +219,14 @@ describe("scan cache round trip", () => {
       ["/a.jsonl", 100, [record()]],
       ["/b.jsonl", 200, [record({ sessionId: "session-b" })]],
     ]);
+    cache.set("/b.jsonl", { ...cache.get("/b.jsonl")!, malformedRecords: 2 });
     const sources = { "claude\u0000/projects": { dir: "/projects", volumeId: "1:2" } };
     expect(decodeScanCache(JSON.parse(write(cache, { sources })), TEST_FORMAT_MAP)).toEqual(cache);
 
     cache.set("/b.jsonl", {
       ...cache.get("/b.jsonl")!,
       size: 30,
+      malformedRecords: 4,
       records: [record({ sessionId: "session-c", model: "claude-opus-5-5", dedupeKey: "msg_3:" })],
     });
     const document = JSON.parse(write(cache, { sources }));

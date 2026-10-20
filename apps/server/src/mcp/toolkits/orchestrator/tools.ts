@@ -78,7 +78,7 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Needs an agent running inside a T3 thread. Read a T3-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState distinguishes working, waiting_for_children, and result_available; a completed turn with live nested work is not a completed task. summary is the final task result, including provider errors on failure, and remains stable after publication. hasPendingChildRuns reports later queued or executing turns in the backing child thread, even after the task is terminal; it does not reopen the task, and task_cancel stops those turns too. Turns held in a stopped queue wait for the user and do not count. latestTerminal* provides later non-monitor turn results. Reading a terminal result acknowledges its automatic parent delivery.",
+    "Needs an agent running inside a T3 thread. Read a T3-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState distinguishes working, waiting_for_children, and result_available; a completed turn with live nested work is not a completed task. summary is the final task result, including provider errors on failure, and remains stable after publication. hasPendingChildRuns reports later queued or executing turns in the backing child thread, even after the task is terminal; it does not reopen the task, and task_cancel stops those turns too. Turns held in a stopped queue wait for the user and do not count. latestTerminal* provides later non-monitor turn results; latestTerminalSummary and latestTerminalResultContextTransferId are independently null when they exactly repeat summary and resultContextTransferId, respectively. Reading a terminal result acknowledges its automatic parent delivery.",
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -92,7 +92,7 @@ const TaskStatusTool = Tool.make("task_status", {
 
 const TaskCancelTool = Tool.make("task_cancel", {
   description:
-    "Needs an agent running inside a T3 thread. Stop a T3-owned delegated task and dispose its automatic parent delivery. Its child thread stops like a user Stop: the running turn is interrupted, queued turns are held, pull request watches end, and the tasks it delegated stop too. This includes later child-thread runs, even after the task is terminal. A terminal task returns its existing status, and published task results remain available.",
+    "Needs an agent running inside a T3 thread. Stop a T3-owned delegated task and dispose its automatic parent delivery. Its child thread stops like a user Stop: the running turn is interrupted, other queued turns are held, pull request watches end, and the tasks it delegated stop too. The task's own queued turn is cancelled, including when held in a stopped queue. This includes later child-thread runs, even after the task is terminal. A terminal task returns its existing status, and published task results remain available.",
   parameters: OrchestratorMcpTaskCancelInput,
   success: OrchestratorMcpTaskCancelResult,
   failure: OrchestratorMcpFailure,

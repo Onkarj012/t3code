@@ -19,6 +19,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -42,6 +43,7 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
+import { encodeScanCache } from "./usageScanCache.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -985,6 +987,85 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("includes host and merged OpenCode instance histories once across list aliases", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const hostRoot = NodePath.join(home, "opencode");
+      const instanceRoot = NodePath.join(home, "opencode-work");
+      const alias = NodePath.join(home, "opencode-alias");
+      const dataHome = NodePath.join(home, "data");
+      const xdgRoot = NodePath.join(dataHome, "opencode");
+      const histories = [
+        { root: hostRoot, id: "host", output: 5 },
+        { root: instanceRoot, id: "work", output: 7 },
+        { root: xdgRoot, id: "xdg", output: 11 },
+      ];
+      yield* Effect.promise(async () => {
+        for (const { root, id, output } of histories) {
+          const directory = NodePath.join(root, "storage", "message", "session-1");
+          await NodeFSP.mkdir(directory, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(directory, `${id}.json`),
+            encodeUnknownJsonString({
+              role: "assistant",
+              modelID: "example-model",
+              time: { created: Date.parse("2026-08-01T10:00:00Z") },
+              tokens: { input: 10, output },
+            }),
+          );
+        }
+        await NodeFSP.symlink(instanceRoot, alias, "junction");
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-opencode-instances",
+            home,
+            environment: { XDG_DATA_HOME: dataHome },
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("opencode-work")]: {
+                  driver: ProviderDriverKind.make("opencode"),
+                  environment: [
+                    {
+                      name: "OPENCODE_DATA_DIR",
+                      value: ` ${instanceRoot}, ${alias} `,
+                      sensitive: false,
+                    },
+                  ],
+                },
+                [ProviderInstanceId.make("opencode-xdg")]: {
+                  driver: ProviderDriverKind.make("opencode"),
+                  environment: [{ name: "OPENCODE_DATA_DIR", value: "", sensitive: false }],
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const sources = summary.sources.filter(
+        (source) => source.fingerprint.provider === "opencode",
+      );
+      const expectedRoots = yield* Effect.promise(() =>
+        Promise.all(histories.map(({ root }) => NodeFSP.realpath(root))),
+      );
+      assert.deepStrictEqual(
+        sources.map((source) => source.fingerprint.resolvedHomePath).sort(),
+        expectedRoots.sort(),
+      );
+      assert.deepStrictEqual(
+        summary.buckets
+          .filter((bucket) => bucket.provider === "opencode")
+          .map((bucket) => bucket.totals.outputTokens)
+          .sort((a, b) => a - b),
+        [5, 7, 11],
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("counts aliased OpenCode and Antigravity directories once", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -1036,6 +1117,77 @@ describe("UsageService", () => {
         sourcesFor("antigravity")[0]?.fingerprint.resolvedHomePath,
         yield* Effect.promise(() => NodeFSP.realpath(conversations)),
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reads Antigravity history from each instance's data directory", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const first = NodePath.join(home, "antigravity-first");
+      const second = NodePath.join(home, "antigravity-second");
+      yield* Effect.promise(async () => {
+        for (const [dir, outputTokens] of [
+          [first, 7],
+          [second, 11],
+        ] as const) {
+          await NodeFSP.mkdir(dir);
+          const db = new NodeSqlite.DatabaseSync(
+            NodePath.join(dir, `${NodePath.basename(dir)}.db`),
+          );
+          try {
+            db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
+            // Step protobuf: 100 input tokens, distinct output tokens, and 2026-08-01T10:00Z.
+            const metadata = new Uint8Array([
+              0x4a,
+              4,
+              0x10,
+              100,
+              0x18,
+              outputTokens,
+              ...Buffer.from("420608a087b7d306", "hex"),
+            ]);
+            db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, metadata);
+          } finally {
+            db.close();
+          }
+        }
+      });
+      const instance = (dataDir: string) => ({
+        driver: ProviderDriverKind.make("antigravity"),
+        environment: [{ name: "ANTIGRAVITY_DATA_DIR", value: dataDir, sensitive: false }],
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-antigravity-instances-test",
+            home,
+            settings: {
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("antigravity-first")]: instance(first),
+                [ProviderInstanceId.make("antigravity-second")]: instance(` ${second}, `),
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const roots = summary.sources
+        .filter((source) => source.fingerprint.provider === "antigravity")
+        .map((source) => source.fingerprint.resolvedHomePath);
+      for (const [dir, outputTokens] of [
+        [first, 7],
+        [second, 11],
+      ] as const) {
+        const root = yield* Effect.promise(() => NodeFSP.realpath(dir));
+        assert.include(roots, root);
+        assert.strictEqual(
+          summary.buckets
+            .filter((bucket) => bucket.provider === "antigravity" && bucket.sourcePath === root)
+            .reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
+          outputTokens,
+        );
+      }
     }).pipe(Effect.scoped),
   );
 
@@ -1729,6 +1881,51 @@ describe("UsageService", () => {
           Effect.provide(layerService({ prefix: "usage-service-late-read-test", home, settings })),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps an absent directory missing when its cached files only contain diagnostics", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(home, "claude", "projects"), { recursive: true }),
+      );
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const mtimeMs = yield* Clock.currentTimeMillis;
+        const cache = encodeScanCache(
+          new Map([
+            [
+              transcript,
+              {
+                size: 0,
+                mtimeMs,
+                provider: "claude" as const,
+                records: [],
+                tailRecords: [],
+                malformedRecords: 2,
+                position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+              },
+            ],
+          ]),
+        );
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(stateDir, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(stateDir, "usage-scan-cache-v5.json"),
+            encodeUnknownJsonString(cache),
+          );
+        });
+        const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.status, "missing");
+        assert.strictEqual(source?.scannedFiles, 0);
+        assert.strictEqual(source?.malformedRecords, 2);
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix: "usage-service-missing-diagnostics", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("reports saved usage of a removed directory only for windows it reaches", () =>

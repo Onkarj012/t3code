@@ -172,7 +172,10 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     provide(
       runSshCommand(targetFor(config), {
         preHostArgs: identityArgs(config),
-        remoteCommandArgs: commandArgs(`exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`),
+        // Match the hub cwd so relative executables and PATH entries resolve identically.
+        remoteCommandArgs: commandArgs(
+          `cd "$HOME/.t3/device/hosts/${owner}" && exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`,
+        ),
         ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
         ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       }),
@@ -254,15 +257,21 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
             "ServerAliveInterval=10",
             "-o",
             "ServerAliveCountMax=3",
-            "-N",
+            "-T",
             "-L",
             `127.0.0.1:${hubPort}:127.0.0.1:${remote.hubPort}`,
             ...(remote.daemonPort === undefined
               ? []
               : ["-L", `127.0.0.1:${daemonPort}:127.0.0.1:${remote.daemonPort}`]),
             config.target,
+            // The server holds the only write end of this stdin, so when it exits for any
+            // reason the remote `cat` sees EOF and ssh exits once its forwarded connections
+            // close, instead of being orphaned.
+            "sh",
+            "-c",
+            quoteRemoteArg("exec cat >/dev/null"),
           ],
-          { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+          { stdin: "pipe", stdout: "ignore", stderr: "pipe" },
         ),
       )
       .pipe(
