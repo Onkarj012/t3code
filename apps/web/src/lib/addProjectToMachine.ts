@@ -13,6 +13,7 @@ import type {
 import { create } from "zustand";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { readProject } from "../state/entities";
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -84,11 +85,11 @@ function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]):
 }
 
 /**
- * Resolves when the clone finishes, or null once it is removed. A failed or
- * cancelled clone keeps waiting, since the composer offers a retry.
+ * Resolves true when the clone finishes, or false once it is removed. A failed
+ * or cancelled clone keeps waiting, since the composer offers a retry.
  */
 function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
-  return new Promise<ProjectCloneSnapshot | null>((resolve) => {
+  return new Promise<boolean>((resolve) => {
     const atom = environmentProjectClonesAtom(environmentId);
     let seen = false;
     let settled = false;
@@ -97,7 +98,15 @@ function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
       if (settled) return;
       const clone = clones.find((candidate) => candidate.projectId === projectId);
       if (clone) seen = true;
-      const result = clone?.phase === "done" ? clone : !clone && seen ? null : undefined;
+      // The server drops a finished clone's record after a short retention, so a
+      // client that reconnects later never sees "done". Discarding a clone deletes
+      // its project, so a project that outlives its record finished cloning.
+      const result =
+        clone?.phase === "done"
+          ? true
+          : !clone && seen
+            ? readProject({ environmentId, projectId }) !== null
+            : undefined;
       if (result === undefined) return;
       settled = true;
       unsubscribe?.();
@@ -184,8 +193,8 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   if (reads.length === 0) return;
 
   void (async () => {
-    const clone = await waitForClone(input.target.environmentId, input.projectId);
-    if (!clone) {
+    const cloned = await waitForClone(input.target.environmentId, input.projectId);
+    if (!cloned) {
       setFileCopy(copyKey, null);
       return;
     }
