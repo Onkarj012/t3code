@@ -293,15 +293,30 @@ const listLineOnLeavePlugin = new Plugin({
     const tr = state.tr.delete(pos + 1, pos + 1 + parsed.markerLength);
     const range = tr.doc.resolve(pos + 1).blockRange();
     if (!range) return null;
-    return tr.wrap(range, [
+    tr.wrap(range, [
       {
         type: state.schema.nodes[ordered ? "orderedList" : "bulletList"]!,
         attrs: ordered ? { start: Number.parseInt(marker, 10) || 1 } : null,
       },
       { type: state.schema.nodes.listItem!, attrs: { marker, space } },
     ]);
+    // The stored draft reads neighbouring lines with the same marker as one list.
+    const list = tr.doc.nodeAt(pos)!;
+    const end = pos + list.nodeSize;
+    if (sameMarkdownList(list, tr.doc.nodeAt(end))) tr.join(end);
+    if (sameMarkdownList(list, tr.doc.resolve(pos).nodeBefore)) tr.join(pos);
+    return tr;
   },
 });
+
+/** Whether two lists would parse back as one list: same kind and same bullet or delimiter. */
+function sameMarkdownList(list: ProseMirrorNode, other: ProseMirrorNode | null | undefined) {
+  if (other?.type !== list.type) return false;
+  const marker = (node: ProseMirrorNode) => String(node.firstChild?.attrs.marker ?? "");
+  return list.type.name === "orderedList"
+    ? marker(list).slice(-1) === marker(other).slice(-1)
+    : marker(list) === marker(other);
+}
 
 const ComposerListItemExtension = ListItem.extend({
   content: LIST_ITEM_CONTENT,

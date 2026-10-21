@@ -244,6 +244,23 @@ describe("a line written as a list item after the fact", () => {
     expect(serializeEditorDoc(editor.state.doc).value).toBe("few\n- get md");
   });
 
+  it("joins the new bullet with the lists around it", async () => {
+    await using screen = await mountEditor("- fix it\n-get md\n- and more");
+    const { editor } = screen;
+    expect(blockTypes(editor)).toEqual(["bulletList", "paragraph", "bulletList"]);
+    let dash = -1;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === "-get md") dash = pos;
+    });
+    await act(async () => {
+      editor.commands.setTextSelection(dash + 1);
+      typeText(editor, dash + 1, dash + 1, " ");
+      editor.commands.focus("start");
+    });
+    expect(blockTypes(editor)).toEqual(["bulletList"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("- fix it\n- get md\n- and more");
+  });
+
   it("still lets a typed `- [ ] ` become a task", async () => {
     await using screen = await mountEditor("few\n");
     const { editor } = screen;
