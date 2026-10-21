@@ -266,6 +266,43 @@ function codeBlockSource(
   return { open: `${fence}${language}${content ? "\n" : ""}`, content, close };
 }
 
+/**
+ * Wraps a top-level paragraph that reads as a list line once the caret leaves it. The `- ` input
+ * rule only fires while the marker is typed, so a dash added in front of existing text would stay a
+ * paragraph that the stored draft already reads as a list. Waiting for the caret to leave keeps the
+ * `- [ ] ` task gesture intact.
+ */
+const listLineOnLeavePlugin = new Plugin({
+  appendTransaction(transactions, oldState, state) {
+    const $old = oldState.selection.$from;
+    if ($old.depth !== 1 || $old.parent.type.name !== "paragraph") return null;
+    const pos = transactions.reduce((mapped, tr) => tr.mapping.map(mapped), $old.before());
+    const $now = state.selection.$from;
+    if ($now.depth === 1 && $now.before() === pos) return null;
+    const paragraph = state.doc.nodeAt(pos);
+    if (paragraph?.type.name !== "paragraph" || state.doc.resolve(pos).depth !== 0) return null;
+    const first = paragraph.firstChild;
+    if (!first?.isText || first.marks.length > 0) return null;
+    const parsed = parseListPrefix(first.text!);
+    if (!parsed || parsed.prefix.kind === "task" || parsed.prefix.indent || !parsed.prefix.space) {
+      return null;
+    }
+    if (paragraph.content.size <= parsed.markerLength) return null;
+    const { marker, space } = parsed.prefix;
+    const ordered = parsed.prefix.kind === "ordered";
+    const tr = state.tr.delete(pos + 1, pos + 1 + parsed.markerLength);
+    const range = tr.doc.resolve(pos + 1).blockRange();
+    if (!range) return null;
+    return tr.wrap(range, [
+      {
+        type: state.schema.nodes[ordered ? "orderedList" : "bulletList"]!,
+        attrs: ordered ? { start: Number.parseInt(marker, 10) || 1 } : null,
+      },
+      { type: state.schema.nodes.listItem!, attrs: { marker, space } },
+    ]);
+  },
+});
+
 const ComposerListItemExtension = ListItem.extend({
   content: LIST_ITEM_CONTENT,
   addAttributes() {
@@ -282,6 +319,9 @@ const ComposerListItemExtension = ListItem.extend({
       Backspace: () => backspaceAcrossList(this.editor),
       Delete: () => deleteAcrossList(this.editor),
     };
+  },
+  addProseMirrorPlugins() {
+    return [...(this.parent?.() ?? []), listLineOnLeavePlugin];
   },
   // ProseMirror can reuse the parent list when only an item's marker changes.
   // Item metadata lets CSS resize its gutter through CommonMark's nine-digit limit.

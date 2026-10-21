@@ -218,6 +218,47 @@ it("keeps the caret inside unknown dollar text across rich and plain remounts", 
   expect(serializeEditorDoc(editor.state.doc).value).toBe("echo $HOXYME now");
 });
 
+function blockTypes(editor: Editor) {
+  const types: string[] = [];
+  editor.state.doc.forEach((node) => types.push(node.type.name));
+  return types;
+}
+
+describe("a line written as a list item after the fact", () => {
+  it.each([
+    { line: "-get md", at: 1, insert: " " },
+    { line: "get md", at: 0, insert: "- " },
+  ])("turns $line into a bullet once the caret leaves it", async ({ line, at, insert }) => {
+    await using screen = await mountEditor(`few\n${line}`);
+    const { editor } = screen;
+    // The second paragraph's text starts after `few` and both paragraph boundaries.
+    const lineStart = "few".length + 3;
+    await act(async () => {
+      typeText(editor, lineStart + at, lineStart + at, insert);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "paragraph"]);
+    await act(async () => {
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "bulletList"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("few\n- get md");
+  });
+
+  it("still lets a typed `- [ ] ` become a task", async () => {
+    await using screen = await mountEditor("few\n");
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus("end");
+      for (const char of "- [ ] x") {
+        const { from, to } = editor.state.selection;
+        typeText(editor, from, to, char);
+      }
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "taskList"]);
+  });
+});
+
 const file = {
   type: "file",
   id: "file-1",
