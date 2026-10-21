@@ -9,6 +9,7 @@ import {
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
+import { closeHistory } from "@tiptap/pm/history";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -259,6 +260,41 @@ describe("a line written as a list item after the fact", () => {
     });
     expect(blockTypes(editor)).toEqual(["bulletList"]);
     expect(serializeEditorDoc(editor.state.doc).value).toBe("- fix it\n- get md\n- and more");
+  });
+
+  it("leaves a line that reads as a horizontal rule alone", async () => {
+    await using screen = await mountEditor("few\n-- -x");
+    const { editor } = screen;
+    const lineStart = "few".length + 3;
+    await act(async () => {
+      typeText(editor, lineStart + 1, lineStart + 1, " ");
+      editor.view.dispatch(editor.state.tr.delete(lineStart + 5, lineStart + 6));
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "paragraph"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("few\n- - -");
+  });
+
+  it("keeps redo after undoing the conversion and leaving the line again", async () => {
+    await using screen = await mountEditor("few\n-get md");
+    const { editor } = screen;
+    const lineStart = "few".length + 3;
+    await act(async () => {
+      typeText(editor, lineStart + 1, lineStart + 1, " ");
+      editor.view.dispatch(closeHistory(editor.state.tr));
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "bulletList"]);
+    await act(async () => {
+      editor.commands.undo();
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("few\n- get md");
+    await act(async () => {
+      editor.commands.focus("end");
+      editor.commands.setTextSelection(1);
+    });
+    expect(blockTypes(editor)).toEqual(["paragraph", "paragraph"]);
+    expect(editor.can().redo()).toBe(true);
   });
 
   it("still lets a typed `- [ ] ` become a task", async () => {

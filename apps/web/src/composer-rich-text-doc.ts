@@ -1,4 +1,5 @@
 import { joinBackward, joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
+import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
   Fragment,
   Mark,
@@ -266,21 +267,42 @@ function codeBlockSource(
   return { open: `${fence}${language}${content ? "\n" : ""}`, content, close };
 }
 
+const HORIZONTAL_RULE_LINE = /^([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$/;
+
+function editedParagraphStart(state: EditorState): number | null {
+  const { $from } = state.selection;
+  return $from.depth === 1 && $from.parent.type.name === "paragraph" ? $from.before() : null;
+}
+
+const listLineEditedKey = new PluginKey<number | null>("listLineEdited");
+
 /**
  * Wraps a top-level paragraph that reads as a list line once the caret leaves it. The `- ` input
  * rule only fires while the marker is typed, so a dash added in front of existing text would stay a
  * paragraph that the stored draft already reads as a list. Waiting for the caret to leave keeps the
- * `- [ ] ` task gesture intact.
+ * `- [ ] ` task gesture intact. Only a line the user edited converts: a line brought back by undo
+ * stays as it is, so leaving it does not wipe the redo stack.
  */
-const listLineOnLeavePlugin = new Plugin({
+const listLineOnLeavePlugin = new Plugin<number | null>({
+  key: listLineEditedKey,
+  state: {
+    init: () => null,
+    apply(tr, edited, _oldState, state) {
+      if (isHistoryTransaction(tr)) return null;
+      if (tr.docChanged) return editedParagraphStart(state);
+      return edited;
+    },
+  },
   appendTransaction(transactions, oldState, state) {
-    const $old = oldState.selection.$from;
-    if ($old.depth !== 1 || $old.parent.type.name !== "paragraph") return null;
-    const pos = transactions.reduce((mapped, tr) => tr.mapping.map(mapped), $old.before());
+    const edited = listLineEditedKey.getState(oldState);
+    if (typeof edited !== "number") return null;
+    if (transactions.some(isHistoryTransaction)) return null;
+    const pos = transactions.reduce((mapped, tr) => tr.mapping.map(mapped), edited);
     const $now = state.selection.$from;
     if ($now.depth === 1 && $now.before() === pos) return null;
     const paragraph = state.doc.nodeAt(pos);
     if (paragraph?.type.name !== "paragraph" || state.doc.resolve(pos).depth !== 0) return null;
+    if (HORIZONTAL_RULE_LINE.test(paragraph.textContent)) return null;
     const first = paragraph.firstChild;
     if (!first?.isText || first.marks.length > 0) return null;
     const parsed = parseListPrefix(first.text!);
@@ -706,7 +728,7 @@ export function buildTiptapContent(
     }
     const opening = blockSyntax ? parseOpeningFence(line) : null;
     if (!opening) {
-      if (blockSyntax && /^([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$/.test(line)) {
+      if (blockSyntax && HORIZONTAL_RULE_LINE.test(line)) {
         entries.push({ rule: line });
         continue;
       }
