@@ -47,6 +47,7 @@ export function SettingsThreadsRouteScreen() {
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           <AutoSettleSettingsRows />
+          <ThreadUndoSettingsSection />
           <BetaSettingsSection />
           <LegacySettingsSection />
         </ScrollView>
@@ -238,6 +239,30 @@ function AutoSettleSettingsRows() {
           </View>
         </SettingsSection>
       ) : null}
+    </View>
+  );
+}
+
+function ThreadUndoSettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const showThreadUndoNotices =
+    !AsyncResult.isSuccess(preferences) || preferences.value.showThreadUndoNotices !== false;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="On this device">
+        <SettingsSwitchRow
+          icon="arrow.uturn.backward"
+          label="Show thread undo notices"
+          value={showThreadUndoNotices}
+          onValueChange={(value) => savePreferences({ showThreadUndoNotices: value })}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Show a notice after settling, snoozing, or unpinning a thread. Turning this off also hides
+        its Undo button.
+      </Text>
     </View>
   );
 }

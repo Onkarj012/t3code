@@ -1,4 +1,5 @@
 import { makeThreadShellFixture } from "../../test-fixtures";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
@@ -13,6 +14,8 @@ import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
+  preferences: {} as { showThreadUndoNotices?: boolean },
+  preferenceListeners: new Set<() => void>(),
   pendingOrder: null as object | null,
   dropBusy: false,
   failedAction: null as string | null,
@@ -63,34 +66,41 @@ vi.mock("../../state/session", () => ({
 vi.mock("../../state/server", () => ({
   environmentServerConfigsAtom: "server-configs",
 }));
+vi.mock("../../state/preferences", () => ({ mobilePreferencesAtom: "preferences" }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
+    subscribe: (_atom: string, listener: () => void) => {
+      state.preferenceListeners.add(listener);
+      return () => state.preferenceListeners.delete(listener);
+    },
     set: (_atom: string, value: boolean) => {
       state.dropBusy = value;
     },
     get: (atom: string) =>
-      atom === "thread-drop-busy"
-        ? state.dropBusy
-        : atom === "thread-shells"
-          ? state.shells
-          : atom === "queued-thread-keys"
-            ? new Set<string>()
-            : new Map(
-                [...state.scopes.keys()].map((environmentId) => [
-                  environmentId,
-                  {
-                    environment: {
-                      capabilities: {
-                        threadSettlement: true,
-                        threadSnooze: true,
-                        threadPinning: true,
-                        threadPinReorder: true,
-                        threadTitleRegeneration: true,
+      atom === "preferences"
+        ? AsyncResult.success(state.preferences)
+        : atom === "thread-drop-busy"
+          ? state.dropBusy
+          : atom === "thread-shells"
+            ? state.shells
+            : atom === "queued-thread-keys"
+              ? new Set<string>()
+              : new Map(
+                  [...state.scopes.keys()].map((environmentId) => [
+                    environmentId,
+                    {
+                      environment: {
+                        capabilities: {
+                          threadSettlement: true,
+                          threadSnooze: true,
+                          threadPinning: true,
+                          threadPinReorder: true,
+                          threadTitleRegeneration: true,
+                        },
                       },
                     },
-                  },
-                ]),
-              ),
+                  ]),
+                ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -147,7 +157,11 @@ vi.mock("../../state/threads", () => ({
   ),
 }));
 
-import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
+import {
+  dismissThreadUndoNotice,
+  readThreadUndoNotice,
+  showThreadUndoNotice,
+} from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
@@ -176,6 +190,7 @@ const mutationCases = [
 ] as const;
 
 beforeEach(() => {
+  state.preferences = {};
   state.failedAction = null;
   state.archivedRefreshes = [];
   state.pendingOrder = null;
@@ -284,6 +299,56 @@ describe("pinned thread operation permissions", () => {
 });
 
 describe("thread action undo", () => {
+  it.each([
+    ["settleThread", "settle"],
+    ["snoozeThread", "snooze"],
+    ["unpinThread", "unpin"],
+  ] as const)("%s succeeds without a notice when disabled", async (handler, action) => {
+    state.preferences = { showThreadUndoNotices: false };
+    expect(await useThreadListActions()[handler](makeThread(), "2099-01-01T09:00:00.000Z")).toBe(
+      true,
+    );
+    expect(state.requests.map(({ action }) => action)).toEqual([action]);
+    expect(readThreadUndoNotice()).toBeNull();
+  });
+
+  it("finishes suppressed undo claims without scheduling an expiry", () => {
+    vi.useFakeTimers();
+    state.preferences = { showThreadUndoNotices: false };
+    const claim = ThreadUndo.begin("settle", "suppressed-thread");
+    showThreadUndoNotice({ action: "Settled", claim, undo: async () => {} });
+    expect(claim.isCurrent()).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(state.preferenceListeners.size).toBe(0);
+  });
+
+  it("uses the latest preference when an in-flight action completes", async () => {
+    state.afterRequest = () => {
+      state.preferences = { showThreadUndoNotices: false };
+    };
+    expect(await useThreadListActions().settleThread(makeThread())).toBe(true);
+    expect(readThreadUndoNotice()).toBeNull();
+  });
+
+  it("retires a visible notice and its retained undo when disabled", async () => {
+    vi.useFakeTimers();
+    const actions = useThreadListActions();
+    await actions.settleThread(makeThread());
+    const undo = readThreadUndoNotice()!.undo;
+    state.preferences = { showThreadUndoNotices: false };
+    for (const listener of state.preferenceListeners) listener();
+    expect(readThreadUndoNotice()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(state.preferenceListeners.size).toBe(0);
+    await undo();
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle"]);
+
+    state.preferences = { showThreadUndoNotices: true };
+    await actions.settleThread(makeThread());
+    await readThreadUndoNotice()!.undo();
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "settle", "unsettle"]);
+  });
+
   it.each([
     ["settleThread", "settle", "Settled", "unsettle"],
     ["snoozeThread", "snooze", "Snoozed", "unsnooze"],
