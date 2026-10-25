@@ -1,3 +1,4 @@
+import type { StoredSdkCredentials } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -101,4 +102,42 @@ it.effect(
         "test-only-work-key",
       );
     }).pipe(Effect.provide(layerHost)),
+);
+
+it.effect.each([
+  {
+    name: "an undefined email",
+    optionalFields: { email: undefined, apiKeyExpiresAtMs: 1000 },
+    expectedFields: { apiKeyExpiresAtMs: 1000 },
+  },
+  {
+    name: "an undefined expiry",
+    optionalFields: { email: "test@example.com", apiKeyExpiresAtMs: undefined },
+    expectedFields: { email: "test@example.com" },
+  },
+  {
+    name: "both optional fields undefined",
+    optionalFields: { email: undefined, apiKeyExpiresAtMs: undefined },
+    expectedFields: {},
+  },
+  {
+    name: "both optional fields omitted",
+    optionalFields: {},
+    expectedFields: {},
+  },
+])("restores SDK credentials with $name in a new store", ({ optionalFields, expectedFields }) =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("personal");
+    const { store } = yield* makeCursorCredentialStore(instanceId);
+    const credentials: StoredSdkCredentials = { ...legacyCredentials };
+    // Match the SDK's runtime values without relying on its stricter declarations.
+    Object.assign(credentials, optionalFields);
+    yield* Effect.tryPromise(() => store.save(credentials));
+
+    const restored = yield* makeCursorCredentialStore(instanceId);
+    assert.deepEqual(yield* Effect.tryPromise(() => restored.store.load()), {
+      ...legacyCredentials,
+      ...expectedFields,
+    });
+  }).pipe(Effect.provide(layerHost)),
 );
