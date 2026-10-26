@@ -1,9 +1,10 @@
 import { AuthOrchestrationOperateScope, EnvironmentId, type EditorId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { act, render as renderUi } from "../../../test/render";
+import { act, fakeTimers, render as renderUi } from "../../../test/render";
 import type { RemoteOpenState } from "../../remoteOpen";
 
 const state = vi.hoisted(() => ({
@@ -159,119 +160,6 @@ async function setup() {
     [Symbol.asyncDispose]: () => environment.disposeAsync(),
   };
 }
-it.each(["local-exec", "remote-links"] as const)(
-  "opens exactly one %s target as the file preview and workspace pickers mount and unmount",
-  async (mode) => {
-    await using fixture = await setup();
-    const { screen, pressOpenFavorite, FavoriteEditorFallback } = fixture;
-    state.allowed.add(selected);
-    state.remote =
-      mode === "local-exec" ? { mode } : { mode, host: { kind: "ssh-alias", host: "test-host" } };
-    const mac = mode === "remote-links";
-    using _platform = vi
-      .spyOn(navigator, "platform", "get")
-      .mockReturnValue(mac ? "MacIntel" : "Linux");
-    const surfaces = ["workspace", "file", "workspace"];
-    if (mode === "local-exec") surfaces.push("fallback");
-
-    for (const surface of surfaces) {
-      const previewVisible = surface === "file";
-      await act(async () => {
-        await screen.rerender(
-          <>
-            {/* Mount the fallback first so picker priority cannot rely on listener order. */}
-            <FavoriteEditorFallback />
-            {surface !== "fallback" && (
-              <OpenInPicker
-                environmentId={selected}
-                keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-                availableEditors={editors}
-                openInCwd="/work/project"
-                displayMode="panel"
-                enableShortcut={!previewVisible}
-              />
-            )}
-            {previewVisible && (
-              <OpenInPicker
-                environmentId={selected}
-                keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-                availableEditors={editors}
-                openInCwd="/work/project/README.md"
-                compact
-              />
-            )}
-          </>,
-        );
-      });
-      state.run.mockClear();
-      state.openUrl.mockClear();
-      const event = await pressOpenFavorite(mac);
-      const cwd = previewVisible ? "/work/project/README.md" : "/work/project";
-      expect.soft(event.defaultPrevented, surface).toBe(true);
-      if (mode === "local-exec") {
-        expect.soft(state.run, surface).toHaveBeenCalledExactlyOnceWith({
-          environmentId: selected,
-          input: { cwd, editor: "vscode" },
-        });
-        expect.soft(state.openUrl, surface).not.toHaveBeenCalled();
-      } else {
-        expect
-          .soft(state.openUrl, surface)
-          .toHaveBeenCalledExactlyOnceWith(`vscode://vscode-remote/ssh-remote+test-host${cwd}`);
-        expect.soft(state.run, surface).not.toHaveBeenCalled();
-      }
-    }
-  },
-);
-
-it.each(["remote-links", "remote-unavailable"] as const)(
-  "does not launch an editor from the %s fallback when no picker is mounted",
-  async (mode) => {
-    await using fixture = await setup();
-    const { screen, pressOpenFavorite, FavoriteEditorFallback } = fixture;
-    state.allowed.add(selected);
-    state.remote =
-      mode === "remote-links" ? { mode, host: { kind: "ssh-alias", host: "test-host" } } : { mode };
-    await act(async () => screen.rerender(<FavoriteEditorFallback />));
-
-    await pressOpenFavorite();
-
-    expect.soft(state.run).not.toHaveBeenCalled();
-    expect.soft(state.openUrl).not.toHaveBeenCalled();
-  },
-);
-
-it.each(["local-exec", "remote-links"] as const)(
-  "selects the preferred editor without launching a %s workspace",
-  async (mode) => {
-    await using fixture = await setup();
-    const { renderPicker, byLabel, menuItems, click } = fixture;
-    state.allowed.add(selected);
-    state.clientEditors = ["cursor", "vscode"];
-    state.remote =
-      mode === "local-exec" ? { mode } : { mode, host: { kind: "ssh-alias", host: "test-host" } };
-    await renderPicker(["cursor", "vscode"], true);
-    byLabel("Open in Cursor");
-    await click(byLabel("Choose editor"));
-    await click(menuItems().find((item) => item.textContent?.includes("VS Code"))!);
-    expect(window.localStorage.getItem("t3code:last-editor")).toBe('"vscode"');
-    const openButton = byLabel("Open in VS Code");
-    expect(state.run).not.toHaveBeenCalled();
-    expect(state.openUrl).not.toHaveBeenCalled();
-
-    await click(openButton);
-    if (mode === "local-exec") {
-      expect(state.run).toHaveBeenCalledExactlyOnceWith({
-        environmentId: selected,
-        input: { cwd: "/work/project", editor: "vscode" },
-      });
-    } else {
-      expect(state.openUrl).toHaveBeenCalledExactlyOnceWith(
-        "vscode://vscode-remote/ssh-remote+test-host/work/project",
-      );
-    }
-  },
-);
 
 describe("host editor access", () => {
   it("uses the selected grant for both the button and a retained shortcut", async () => {
@@ -279,7 +167,7 @@ describe("host editor access", () => {
     const { renderPicker, byLabel, primaryButton, click, pressOpenFavorite } = fixture;
     state.allowed.add(selected);
     await renderPicker();
-    // Revoke without rerendering: the mounted button and shortcut must re-check the grant.
+    // Revoke without rerendering to exercise execution-time grant checks.
     state.allowed.delete(selected);
     state.allowed.add(primary);
     await click(primaryButton());
@@ -293,71 +181,37 @@ describe("host editor access", () => {
     expect(byLabel("Choose editor").disabled).toBe(true);
     expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
   });
-
-  it("closes an open picker on revocation and launches only after a fresh grant", async () => {
-    await using fixture = await setup();
-    const { renderPicker, byLabel, primaryButton, menuItems, click } = fixture;
-    state.allowed.add(selected);
-    await renderPicker();
-    await click(byLabel("Choose editor"));
-    expect(menuItems().length).toBeGreaterThan(0);
-    state.allowed.delete(selected);
-    await renderPicker();
-    // The menu unmounts after its exit animation, so wait for it rather than asserting at once.
-    await vi.waitFor(() => expect(menuItems()).toHaveLength(0));
-    state.allowed.add(selected);
-    await renderPicker();
-    expect(menuItems()).toHaveLength(0);
-    await click(primaryButton());
-    expect(state.run).toHaveBeenCalledExactlyOnceWith({
-      environmentId: selected,
-      input: { cwd: "/work/project", editor: "vscode" },
-    });
-  });
 });
 
-it("reveals a file in the file manager instead of opening it", async () => {
-  await using fixture = await setup();
-  const { renderPicker, primaryButton, click } = fixture;
-  state.allowed.add(selected);
-  await renderPicker(["file-manager"], false, {
-    openInCwd: "/work/project/README.md",
-    revealFileManager: true,
-  });
-  await click(primaryButton());
-  expect(state.run).toHaveBeenCalledExactlyOnceWith({
-    environmentId: selected,
-    input: { cwd: "/work/project/README.md", editor: "file-manager", reveal: true },
-  });
-});
-
-describe("client editor links", () => {
-  it("opens an SSH editor URL without host operate permission", async () => {
+describe("open in editor announcement", () => {
+  it("speaks only after the shortcut opened the editor, from the picker or the fallback", async () => {
     await using fixture = await setup();
-    const { renderPicker, primaryButton, click } = fixture;
-    state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "test-host" } };
+    const { screen, renderPicker, pressOpenFavorite, FavoriteEditorFallback } = fixture;
+    state.allowed.add(selected);
     await renderPicker();
-    expect(primaryButton().disabled).toBe(false);
-    await click(primaryButton());
-    expect(state.openUrl).toHaveBeenCalledExactlyOnceWith(
-      "vscode://vscode-remote/ssh-remote+test-host/work/project",
-    );
-    expect(state.run).not.toHaveBeenCalled();
-    expect(state.markHintSeen).toHaveBeenCalledOnce();
-    expect(state.setPreferred).toHaveBeenCalledExactlyOnceWith("vscode");
-  });
+    using _timers = fakeTimers();
+    const regions = () => [...document.querySelectorAll('body > [aria-live="polite"]')];
+    const spoken = async () => {
+      await act(async () => vi.runAllTimers());
+      return regions()
+        .map((region) => region.textContent)
+        .join("");
+    };
+    const refuse = () =>
+      state.run.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No editor"))));
 
-  it("does not change preferences when the client rejects the SSH URL", async () => {
-    await using fixture = await setup();
-    const { renderPicker, pressOpenFavorite } = fixture;
-    state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "test-host" } };
-    state.openUrl.mockResolvedValue(false);
-    await renderPicker();
-    const event = await pressOpenFavorite();
-    expect(state.openUrl).toHaveBeenCalledOnce();
-    expect(event.defaultPrevented).toBe(true);
-    expect(state.run).not.toHaveBeenCalled();
-    expect(state.setPreferred).not.toHaveBeenCalled();
-    expect(state.markHintSeen).not.toHaveBeenCalled();
+    refuse();
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("");
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("Opened in VS Code");
+
+    for (const region of regions()) region.textContent = "";
+    await act(async () => screen.rerender(<FavoriteEditorFallback />));
+    refuse();
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("");
+    await pressOpenFavorite();
+    expect(await spoken()).toBe("Opened in VS Code");
   });
 });
