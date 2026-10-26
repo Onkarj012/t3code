@@ -122,14 +122,20 @@ it.effect.each([
   Effect.gen(function* () {
     const instanceId = ProviderInstanceId.make("personal");
     const { store } = yield* makeCursorCredentialStore(instanceId);
-    const credentials: StoredSdkCredentials = { ...legacyCredentials };
+    const requiredFields: StoredSdkCredentials = {
+      version: 1,
+      backendUrl: "https://api.cursor.com",
+      apiKey: "test-only-key",
+      createdAtMs: 100,
+    };
+    const credentials = { ...requiredFields };
     // Match the SDK's runtime values without relying on its stricter declarations.
     Object.assign(credentials, optionalFields);
     yield* Effect.tryPromise(() => store.save(credentials));
 
     const restored = yield* makeCursorCredentialStore(instanceId);
     assert.deepEqual(yield* Effect.tryPromise(() => restored.store.load()), {
-      ...legacyCredentials,
+      ...requiredFields,
       ...expectedFields,
     });
   }).pipe(Effect.provide(layerHost)),
