@@ -34,6 +34,7 @@ import {
 } from "./showcaseRenderSignal";
 import { stageShowcaseAgentActivity } from "./stageShowcaseAgentActivity";
 import { openSettings } from "../settings/settings-navigation";
+import { selectWorkspaceDetail } from "../workspace/workspace-detail-selection";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 const SHOWCASE_THREAD_ID = "remote-command-center";
@@ -125,7 +126,6 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     }
 
     let cancelled = false;
-    let lastOutcome: string | null = null;
     void retryShowcaseOperation(async () => applyNativeShowcaseOrientation(orientation), {
       isCancelled: () => cancelled,
     }).then((applied) => {
@@ -250,7 +250,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     } else if (requestedScene === "review") {
       navigation.dispatch(CommonActions.navigate("ThreadReview", params));
     } else {
-      navigation.dispatch(CommonActions.navigate("Thread", params));
+      navigation.dispatch(selectWorkspaceDetail({ name: "Thread", params }));
     }
   }, [hasFixture, navigation, requestedScene, scene, showcaseThread]);
 

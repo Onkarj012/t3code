@@ -3,8 +3,6 @@ import {
   AudioModule,
   RecordingPresets,
   requestRecordingPermissionsAsync,
-  setAudioModeAsync,
-  setIsAudioActiveAsync,
   type RecorderState,
   type RecordingStatus,
 } from "expo-audio";
@@ -40,6 +38,11 @@ import {
 import { createLazyVoiceRecorder, type LazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
+import {
+  acquireAudioSession,
+  activateAudioSession,
+  releaseAudioSession,
+} from "../../lib/audioSession";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const VOICE_METERING_INTERVAL_MS = 80;
@@ -54,32 +57,6 @@ const VOICE_RECORDING_OPTIONS = {
   isMeteringEnabled: true,
   ...(Platform.OS === "ios" ? IOS_RECORDING_OPTIONS : ANDROID_RECORDING_OPTIONS),
 };
-
-async function releaseVoiceRecordingAudio(): Promise<void> {
-  try {
-    await setAudioModeAsync({ allowsRecording: false });
-  } finally {
-    // Expo never deactivates AVAudioSession after recording; do so to resume interrupted audio.
-    await setIsAudioActiveAsync(false);
-  }
-}
-
-async function configureVoiceRecordingAudio(): Promise<void> {
-  try {
-    await setAudioModeAsync({
-      allowsRecording: true,
-      interruptionMode: "doNotMix",
-      playsInSilentMode: true,
-      shouldPlayInBackground: false,
-    });
-    await setIsAudioActiveAsync(true);
-  } catch (error) {
-    try {
-      await releaseVoiceRecordingAudio();
-    } catch {}
-    throw error;
-  }
-}
 
 const VoiceInputContext = createContext<ReturnType<typeof useVoiceInputRuntime> | null>(null);
 
@@ -120,6 +97,7 @@ function useVoiceInputRuntime() {
   const audioLevels = useSharedValue(audioLevelsRef.current);
   const sessionRef = useRef<VoiceInputSession | null>(null);
   const recorderRef = useRef<LazyVoiceRecorder<RecorderState> | null>(null);
+  const audioToken = useRef<ReturnType<typeof acquireAudioSession> | null>(null);
 
   if (!sessionRef.current || !recorderRef.current) {
     const recorder = createLazyVoiceRecorder({
@@ -156,8 +134,20 @@ function useVoiceInputRuntime() {
         const permission = await requestRecordingPermissionsAsync();
         return { granted: permission.granted, canAskAgain: permission.canAskAgain };
       },
-      configureRecording: configureVoiceRecordingAudio,
-      releaseRecording: releaseVoiceRecordingAudio,
+      configureRecording: async () => {
+        const token = acquireAudioSession("recording");
+        audioToken.current = token;
+        try {
+          await activateAudioSession(token);
+        } catch (error) {
+          await releaseAudioSession(token).catch(() => {});
+          throw error;
+        }
+      },
+      releaseRecording: async () => {
+        if (audioToken.current) await releaseAudioSession(audioToken.current);
+        audioToken.current = null;
+      },
       deleteRecording: (uri) => new File(uri).delete(),
       onStateChange: (nextState) =>
         setState({
@@ -205,7 +195,7 @@ function useVoiceInputRuntime() {
 
     if (audioLevelsRef.current.some((level) => level !== 0)) {
       audioLevelsRef.current = Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0);
-      audioLevels.value = audioLevelsRef.current;
+      audioLevels.set(audioLevelsRef.current);
     }
     if (elapsedSecondsRef.current !== 0) {
       elapsedSecondsRef.current = 0;
@@ -223,7 +213,7 @@ function useVoiceInputRuntime() {
       if (level !== 0 || history.some((sample) => sample !== 0)) {
         const nextLevels = [...history.slice(1), level];
         audioLevelsRef.current = nextLevels;
-        audioLevels.value = nextLevels;
+        audioLevels.set(nextLevels);
       }
 
       const nextElapsedSeconds = Math.min(

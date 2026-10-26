@@ -25,10 +25,11 @@ export function useNativeReviewDiffHighlighting(input: {
   readonly files: ReadonlyArray<NativeReviewDiffFile>;
   readonly rows: ReadonlyArray<NativeReviewDiffRow>;
   readonly scheme: HighlightScheme;
+  readonly collapsedFileIds: ReadonlySet<string>;
   readonly resetKey: string;
   readonly enabled: boolean;
 }) {
-  const { enabled, files, resetKey, rows, scheme } = input;
+  const { collapsedFileIds, enabled, files, resetKey, rows, scheme } = input;
   const highlightedRowIdsRef = useRef<Set<string>>(new Set());
   const viewportScope = `${enabled}:${resetKey}:${rows.length}`;
   const [viewport, setViewport] = useState<{
@@ -47,6 +48,8 @@ export function useNativeReviewDiffHighlighting(input: {
     ),
   );
 
+  // Effect on purpose: the native highlighter's token stream and the scheduler's timers must
+  // reset with the diff the view shows, and be cancelled when it unmounts.
   useEffect(() => {
     traceDiffHighlight("viewport-reset", {
       reset: diffHighlightTraceId(resetKey),
@@ -64,6 +67,7 @@ export function useNativeReviewDiffHighlighting(input: {
     return () => scheduler.cancel();
   }, [enabled, resetKey, rows.length, scheduler, viewportScope]);
 
+  // Effect on purpose: abortable async highlighting tied to the visible range's lifetime.
   useEffect(() => {
     if (!enabled || rows.length === 0 || !viewport.range || viewport.scope !== viewportScope) {
       return;
@@ -120,6 +124,7 @@ export function useNativeReviewDiffHighlighting(input: {
             files,
             rows,
             scheme,
+            collapsedFileIds,
             firstRowIndex: requestRange.firstRowIndex,
             lastRowIndex: requestRange.lastRowIndex,
             overscanRows,
@@ -140,6 +145,7 @@ export function useNativeReviewDiffHighlighting(input: {
             error: squashAtomCommandFailure(settled),
             resetKey,
             scheme,
+            collapsedFileIds,
             firstRowIndex: requestRange.firstRowIndex,
             lastRowIndex: requestRange.lastRowIndex,
           });
@@ -171,7 +177,7 @@ export function useNativeReviewDiffHighlighting(input: {
       traceDiffHighlight("viewport-abort", { generation, reset });
       abortController.abort();
     };
-  }, [enabled, files, resetKey, rows, scheme, viewport, viewportScope]);
+  }, [collapsedFileIds, enabled, files, resetKey, rows, scheme, viewport, viewportScope]);
 
   const acknowledgeTokenPatch = useCallback((payload: Readonly<Record<string, unknown>>) => {
     const pending = pendingPatchesRef.current;

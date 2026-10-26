@@ -9,10 +9,7 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import {
-  threadSearchMatchKey,
-  type EnvironmentThreadSearchMatch,
-} from "@t3tools/client-runtime/state/thread-search";
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
@@ -27,7 +24,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
-import { ScrollViewMarker } from "react-native-screens";
+import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -291,8 +288,6 @@ export function HomeScreen(props: HomeScreenProps) {
           )
         ? [props.selectedEnvironmentId]
         : [];
-  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
-  const threadSearchMatchByKey = useThreadListSearchMatches(props.threads, threadSearch);
   const handleSwipeableWillOpen = (methods: SwipeableMethods) => {
     if (openSwipeableRef.current !== methods) {
       openSwipeableRef.current?.close();
@@ -380,6 +375,14 @@ export function HomeScreen(props: HomeScreenProps) {
 
   const v2ProjectScopeKey = props.selectedProjectKey;
   const v2ScopedProjectGroup = findHomeProjectScope(projectScopes, v2ProjectScopeKey);
+  const threadSearch = useThreadSearch(
+    searchEnvironmentIds,
+    props.searchQuery,
+    v2ScopedProjectGroup === null
+      ? {}
+      : { projectIds: v2ScopedProjectGroup.projectRefs.map((ref) => ref.projectId) },
+  );
+  const threadSearchMatchByKey = useThreadListSearchMatches(props.threads, threadSearch);
   const v2ProjectTitleByProjectKey = new Map(
     projectScopes.flatMap((scope) =>
       scope.projectRefs.map(
@@ -447,6 +450,7 @@ export function HomeScreen(props: HomeScreenProps) {
     layout: threadListV2Layout,
     items: threadListV2Items,
     contentOnlyThreadKeys,
+    olderSettledShelf,
   } = useThreadListV2({
     threads: props.threads,
     pendingTasks: props.pendingTasks,
@@ -658,7 +662,9 @@ export function HomeScreen(props: HomeScreenProps) {
   };
 
   const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
+    props.threads.some((thread) => thread.archivedAt === null) ||
+    props.pendingTasks.length > 0 ||
+    threadListV2Layout.settledCount > 0;
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
@@ -806,7 +812,15 @@ export function HomeScreen(props: HomeScreenProps) {
                 settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
                   <ThreadListV2ShowMoreRow
                     hiddenCount={threadListV2Layout.hiddenSettledCount}
-                    onPress={showMoreSettled}
+                    {...(olderSettledShelf.loading
+                      ? { state: "loading" as const }
+                      : olderSettledShelf.failed
+                        ? { state: "failed" as const }
+                        : {})}
+                    onPress={() => {
+                      olderSettledShelf.retry();
+                      showMoreSettled();
+                    }}
                   />
                 ) : null
               }

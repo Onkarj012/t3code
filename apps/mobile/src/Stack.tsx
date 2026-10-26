@@ -65,7 +65,10 @@ import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSh
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
-import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
+import {
+  FullscreenThreadRouteScreen,
+  ThreadRouteScreen,
+} from "./features/threads/ThreadRouteScreen";
 import { McpAppFullscreenScreen } from "./features/threads/McpAppFullscreenScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
@@ -149,6 +152,10 @@ import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
+import {
+  selectWorkspaceDetail,
+  workspaceDetailRouter,
+} from "./features/workspace/workspace-detail-selection";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -525,7 +532,12 @@ function RootStackLayout(props: {
     if (!transition.shareIdToPresent) {
       return;
     }
-    navigation.navigate("Thread", { draft: { incomingShareId: transition.shareIdToPresent } });
+    navigation.dispatch(
+      selectWorkspaceDetail({
+        name: "Thread",
+        params: { draft: { incomingShareId: transition.shareIdToPresent } },
+      }),
+    );
   }, [navigation, pendingShare, props.state]);
 
   return (
@@ -599,6 +611,7 @@ function NotFoundScreen() {
 
 const RootStackConfig = createWorkspaceStackNavigator({
   initialRouteName: "Home",
+  UNSTABLE_router: workspaceDetailRouter,
   // React Navigation calls layouts inline; compiled components would share the navigator's memo cache.
   layout: (props) => <RootStackLayout {...props} />,
   screenOptions: {
@@ -802,6 +815,13 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ThreadTerminalRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/terminal`,
       options: SOLID_HEADER_OPTIONS,
+    }),
+    ThreadInspectorFullscreen: createNativeStackScreen({
+      screen: FullscreenThreadRouteScreen,
+      options: {
+        ...THREAD_HEADER_OPTIONS,
+        presentation: "fullScreenModal",
+      },
     }),
     ThreadDevicePreview: createNativeStackScreen({
       screen: DevicePreviewRouteScreen,
@@ -1057,6 +1077,7 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
   const nativeMetrics = useNativeLayoutMetrics();
   const usesSplitView = deriveLayout({ width, height, nativeMetrics }).usesSplitView;
 
+  /* oxlint-disable react/no-unstable-nested-components -- React Navigation invokes screenLayout as a render callback. */
   return (
     <Navigator
       screenLayout={(props) => <GuardedScreenLayout {...props} />}
@@ -1067,6 +1088,8 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
       }
     />
   );
+
+  /* oxlint-enable react/no-unstable-nested-components */
 });
 
 type RootStackType = typeof RootStack;
