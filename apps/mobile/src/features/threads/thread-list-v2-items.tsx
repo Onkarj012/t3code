@@ -13,6 +13,8 @@ import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
+import { connectedEnvironmentIdsAtom } from "../../state/presentation";
+import { snoozeUntilReconnect } from "../../state/reconnectSnooze";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import type { ThreadMoveDestination } from "./threadOrder";
@@ -30,6 +32,7 @@ import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
+import { useAtomValue } from "@effect/atom-react";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -918,6 +921,22 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : [],
     [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
   );
+  const environmentConnected = useAtomValue(connectedEnvironmentIdsAtom).includes(
+    thread.environmentId,
+  );
+  const hideEnvironmentMenuItems = useMemo<MenuAction[]>(
+    () =>
+      environmentConnected
+        ? []
+        : [
+            {
+              id: "hide-environment",
+              title: `Hide ${props.environmentLabel ?? "this device"} until it reconnects`,
+              image: "eye.slash",
+            },
+          ],
+    [environmentConnected, props.environmentLabel],
+  );
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
@@ -962,6 +981,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         pin: [],
         secondary: [
           ...titleMenuItems,
+          ...hideEnvironmentMenuItems,
           ...autoSettleMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
           SNOOZED_MENU_ACTIONS[1]!,
@@ -974,7 +994,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         direct: [...direct, LEGACY_MENU_ACTIONS[0]!],
         reorder: reorderMenuItems,
         pin: pinMenuItems,
-        secondary: [...titleMenuItems, LEGACY_MENU_ACTIONS[1]!],
+        secondary: [...titleMenuItems, ...hideEnvironmentMenuItems, LEGACY_MENU_ACTIONS[1]!],
       });
     }
     if (canUnsettle) {
@@ -987,6 +1007,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         pin: pinMenuItems,
         secondary: [
           ...titleMenuItems,
+          ...hideEnvironmentMenuItems,
           ...autoSettleMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
           SLIM_MENU_ACTIONS[1]!,
@@ -1006,6 +1027,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       pin: pinMenuItems,
       secondary: [
         ...titleMenuItems,
+        ...hideEnvironmentMenuItems,
         ...autoSettleMenuItems,
         LEGACY_MENU_ACTIONS[0]!,
         CARD_MENU_ACTIONS[1]!,
@@ -1014,6 +1036,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [
     autoSettleMenuItems,
     canUnsettle,
+    hideEnvironmentMenuItems,
     pinMenuItems,
     props.settlementSupported,
     reorderMenuItems,
@@ -1040,6 +1063,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "turn-into-project") void turnThreadIntoProject(thread);
+      if (nativeEvent.event === "hide-environment") snoozeUntilReconnect(thread.environmentId);
       if (nativeEvent.event === "copy-thread") {
         const target = threadChipCopyTarget(
           { environmentId: thread.environmentId, threadId: thread.id },

@@ -18,6 +18,7 @@ import { startBackgroundThreadAnnouncements } from "./components/BackgroundThrea
 import { startSshPasswordPromptQueue } from "./components/desktop/SshPasswordPromptDialog";
 import { startHostFreezeToasts } from "./components/HostFreezeToastCoordinator";
 import { startKeybindingsUpdateToasts } from "./components/KeybindingsUpdateToast";
+import { startReconnectSnoozeClearing } from "./state/reconnectSnoozeClearing";
 import { startLegacyThreadMigrationToast } from "./components/LegacyThreadMigrationToast";
 import { startPermissionUpdateNotices } from "./components/PermissionUpdateNotice";
 import { startAgentOpenedPreviews } from "./components/preview/agentOpenedPreviews";
@@ -283,6 +284,7 @@ export function startAppServices(): AppRouter {
   startBackgroundThreadAnnouncements(appAtomRegistry, router);
   startThreadVisitedMigration(appAtomRegistry);
   startSshPasswordPromptQueue();
+  startReconnectSnoozeClearing();
 
   startKeybindingsUpdateToasts();
   startSlowRpcRequestToasts();

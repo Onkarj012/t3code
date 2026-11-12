@@ -35,6 +35,24 @@ export function* enabledEnvironmentIds(
   }
 }
 
+/** Drops threads of environments hidden until they reconnect, except those `keep` accepts. */
+export function withoutReconnectSnoozed<T extends { readonly environmentId: EnvironmentIdType }>(
+  threads: ReadonlyArray<T>,
+  snoozed: ReadonlySet<EnvironmentIdType>,
+  keep: (thread: T) => boolean,
+): ReadonlyArray<T> {
+  if (snoozed.size === 0) return threads;
+  return threads.filter((thread) => !snoozed.has(thread.environmentId) || keep(thread));
+}
+
+/** Snoozed environments that have finished connecting, so their threads show again. */
+export function reconnectSnoozesToClear(
+  snoozed: ReadonlySet<EnvironmentIdType>,
+  connected: ReadonlyArray<EnvironmentIdType>,
+): ReadonlyArray<EnvironmentIdType> {
+  return connected.filter((environmentId) => snoozed.has(environmentId));
+}
+
 const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({
   isReady: false,
   entries: new Map(),

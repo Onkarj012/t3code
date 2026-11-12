@@ -675,6 +675,8 @@ export function buildThreadListV2Items(input: {
   readonly isListedSettled?: (thread: EnvironmentThreadShell) => boolean;
   /** Settled threads in scope that are not local (older settled threads not loaded). */
   readonly unloadedSettledCount?: number;
+  /** Environments hidden until they reconnect; search and the environment filter still show them. */
+  readonly reconnectSnoozedEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }): ThreadListV2Layout {
   const now = input.now;
   const pending =
@@ -702,12 +704,16 @@ export function buildThreadListV2Items(input: {
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
+  const reconnectSnoozed =
+    query.length > 0 || input.environmentId !== null ? null : input.reconnectSnoozedEnvironmentIds;
   const listedThreads = input.threads.filter(
     (thread) =>
       thread.archivedAt === null &&
       isListedThreadLineage(thread.lineage) &&
       (input.environmentId === null || thread.environmentId === input.environmentId) &&
-      (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+      (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) &&
+      (reconnectSnoozed?.has(thread.environmentId) !== true ||
+        `${thread.environmentId}:${thread.id}` === input.selectedThreadKey),
   );
   // The same matches as the command palette, typo fallback included. Only
   // listed threads are ranked: a hidden exact match must not turn typos off.

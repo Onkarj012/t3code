@@ -59,6 +59,11 @@ import { readEnvironmentScope } from "~/state/session";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { APP_VERSION } from "~/branding";
 import { useManagedPolicy } from "~/state/managedPolicy";
+import {
+  showReconnectSnoozed,
+  snoozeUntilReconnect,
+  useReconnectSnoozed,
+} from "../../state/reconnectSnooze";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "~/state/server";
 import {
@@ -124,6 +129,7 @@ export function SavedBackendListRow({
   const enabled = environment.entry.enabled && !unsupported;
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
+  const threadsHidden = useReconnectSnoozed().has(environmentId);
   const errorTraceId = environment.connection.traceId;
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",
@@ -215,6 +221,7 @@ export function SavedBackendListRow({
     // The headline below names the failure in full.
     diagnosis ? null : resumingServerUpdate ? "Restarting" : status.text,
     enabled && versionMismatch ? serverVersion : null,
+    threadsHidden ? "Threads hidden until it reconnects" : null,
   ]
     .filter((value): value is string => value !== null)
     .join(" · ");
@@ -423,6 +430,15 @@ export function SavedBackendListRow({
           ) : null}
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
+          ) : null}
+          {threadsHidden ? (
+            <MenuItem onClick={() => showReconnectSnoozed(environmentId)}>
+              Show threads now
+            </MenuItem>
+          ) : enabled && !isConnected ? (
+            <MenuItem onClick={() => snoozeUntilReconnect(environmentId)}>
+              Hide threads until it reconnects
+            </MenuItem>
           ) : null}
           <MenuSeparator />
           <MenuItem variant="destructive" onClick={() => onRemove(environment)}>

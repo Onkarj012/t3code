@@ -33,6 +33,8 @@ import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-pref
 import { useThreadListNow } from "./use-thread-list-now";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { useReconnectSnoozed } from "../../state/reconnectSnooze";
+import { ReconnectSnoozedFooter } from "../home/ReconnectSnoozedFooter";
 import {
   useLaunchingThreads,
   usePendingNewTasks,
@@ -264,6 +266,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder();
+  const reconnectSnoozed = useReconnectSnoozed();
   const {
     layout: threadListV2Layout,
     items: threadListV2Items,
@@ -290,7 +293,12 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
+    reconnectSnoozed,
   });
+  const reconnectSnoozedFooter =
+    props.searchQuery.trim().length === 0 && options.selectedEnvironmentId === null ? (
+      <ReconnectSnoozedFooter environments={environments} />
+    ) : null;
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
       ? [
@@ -632,6 +640,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
                 ListEmptyComponent={listEmpty}
+                ListFooterComponent={reconnectSnoozedFooter}
               />
             </GestureDetector>
           </SwipeableScrollGateProvider>
@@ -685,6 +694,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
                 ListEmptyComponent={listEmpty}
+                ListFooterComponent={reconnectSnoozedFooter}
               />
             </GestureDetector>
           </SwipeableScrollGateProvider>

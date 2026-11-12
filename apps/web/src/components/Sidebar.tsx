@@ -35,6 +35,7 @@ import {
   isThreadWorking,
 } from "@t3tools/client-runtime/state/thread-inbox";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
+import { withoutReconnectSnoozed } from "@t3tools/client-runtime/state/connections";
 import {
   nextShownOrder,
   threadSearchMatchKey,
@@ -146,7 +147,12 @@ import {
   useServerConfigs,
   useQuietThreadShells,
 } from "../state/entities";
-import { environmentPresentations } from "../state/presentation";
+import { environmentPresentations, environmentSummaries } from "../state/presentation";
+import {
+  showReconnectSnoozed,
+  snoozeUntilReconnect,
+  useReconnectSnoozed,
+} from "../state/reconnectSnooze";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
@@ -327,6 +333,7 @@ const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+const NO_RECONNECT_SNOOZED: ReadonlySet<EnvironmentId> = new Set();
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
@@ -418,6 +425,7 @@ function useSidebarThreads(input: {
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly threads: readonly EnvironmentThreadShell[];
+  readonly reconnectSnoozed: ReadonlySet<EnvironmentId>;
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly routeRowThreadKey: string | null;
   // Set in boring mode: the project groups to fold active threads into, in order.
@@ -432,6 +440,7 @@ function useSidebarThreads(input: {
     connectedEnvironmentIds,
     optimisticDrop,
     threads,
+    reconnectSnoozed,
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups,
@@ -491,7 +500,10 @@ function useSidebarThreads(input: {
     partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
+    scopes: olderSettledScopes(
+      [...serverConfigs.keys()].filter((environmentId) => !reconnectSnoozed.has(environmentId)),
+      scopedProjectKeys,
+    ),
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
@@ -1124,6 +1136,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ),
         );
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
+  const reconnectSnoozed = useReconnectSnoozed();
+  // Search still finds a snoozed device's threads, and the open thread keeps its row.
+  const browsedThreads = isSearchingThreads
+    ? listedThreads
+    : withoutReconnectSnoozed(
+        listedThreads,
+        reconnectSnoozed,
+        (thread) => threadShellKey(thread) === routeRowThreadKey,
+      );
 
   // History, the palette and links can open a thread the scope hides or the list
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
@@ -1341,7 +1362,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     serverConfigs,
     connectedEnvironmentIds,
     optimisticDrop,
-    threads: listedThreads,
+    threads: browsedThreads,
+    reconnectSnoozed: isSearchingThreads ? NO_RECONNECT_SNOOZED : reconnectSnoozed,
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
@@ -2654,6 +2676,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              disconnectedEnvironmentLabel: appAtomRegistry
+                .get(environmentSummaries.connectedEnvironmentIdsAtom)
+                .includes(threadRef.environmentId)
+                ? null
+                : (environmentLabelById.get(threadRef.environmentId) ?? null),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2682,6 +2709,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "hide-environment":
+            removeFromSelection(
+              [...useThreadSelectionStore.getState().selectedThreadKeys].filter(
+                (key) => parseScopedThreadKey(key)?.environmentId === threadRef.environmentId,
+              ),
+            );
+            snoozeUntilReconnect(threadRef.environmentId);
+            return;
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKeys(
@@ -3648,6 +3683,28 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               )}
             </div>
           ) : null}
+          {isSearchingThreads
+            ? null
+            : [...reconnectSnoozed].map((environmentId) => {
+                const label = environmentLabelById.get(environmentId);
+                if (label === undefined) return null;
+                return (
+                  <div
+                    key={environmentId}
+                    data-testid="sidebar-reconnect-snoozed"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-sidebar-muted-foreground"
+                  >
+                    <span className="min-w-0 truncate">{label} hidden until it reconnects</span>
+                    <button
+                      type="button"
+                      onClick={() => showReconnectSnoozed(environmentId)}
+                      className="shrink-0 cursor-pointer font-medium text-sidebar-foreground/80 hover:text-sidebar-foreground"
+                    >
+                      Show
+                    </button>
+                  </div>
+                );
+              })}
         </SidebarGroup>
       </SidebarContent>
       <SidebarChromeFooter />

@@ -79,6 +79,8 @@ import {
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
+import { useReconnectSnoozed } from "../../state/reconnectSnooze";
+import { ReconnectSnoozedFooter } from "./ReconnectSnoozedFooter";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
@@ -458,6 +460,7 @@ export function HomeScreen(props: HomeScreenProps) {
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder();
+  const reconnectSnoozed = useReconnectSnoozed();
   const {
     layout: threadListV2Layout,
     items: threadListV2Items,
@@ -480,6 +483,7 @@ export function HomeScreen(props: HomeScreenProps) {
     pendingOrder,
     shelfPreferencesLoaded,
     workingShelfEnabled,
+    reconnectSnoozed,
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
@@ -820,20 +824,26 @@ export function HomeScreen(props: HomeScreenProps) {
                 // Lifted above the rows so an iOS filter menu's dismissal morph is not covered.
                 ListHeaderComponentStyle={{ zIndex: 1 }}
                 ListFooterComponent={
-                  settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
-                    <ThreadListV2ShowMoreRow
-                      hiddenCount={threadListV2Layout.hiddenSettledCount}
-                      {...(olderSettledShelf.loading
-                        ? { state: "loading" as const }
-                        : olderSettledShelf.failed
-                          ? { state: "failed" as const }
-                          : {})}
-                      onPress={() => {
-                        olderSettledShelf.retry();
-                        showMoreSettled();
-                      }}
-                    />
-                  ) : null
+                  <>
+                    {settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                      <ThreadListV2ShowMoreRow
+                        hiddenCount={threadListV2Layout.hiddenSettledCount}
+                        {...(olderSettledShelf.loading
+                          ? { state: "loading" as const }
+                          : olderSettledShelf.failed
+                            ? { state: "failed" as const }
+                            : {})}
+                        onPress={() => {
+                          olderSettledShelf.retry();
+                          showMoreSettled();
+                        }}
+                      />
+                    ) : null}
+                    {props.searchQuery.trim().length === 0 &&
+                    props.selectedEnvironmentId === null ? (
+                      <ReconnectSnoozedFooter environments={props.environments} />
+                    ) : null}
+                  </>
                 }
                 ListEmptyComponent={v2ListEmpty}
                 style={{ flex: 1 }}

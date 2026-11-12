@@ -39,6 +39,8 @@ function observeInbox(
   return threadListInboxReturns.observe(threads);
 }
 
+const NO_HIDDEN_ENVIRONMENTS: ReadonlySet<EnvironmentId> = new Set();
+
 /**
  * Shelf callbacks prevent compiler caching across the whole derivation, so each stage keeps
  * its own memo boundary to preserve the list's identity during unrelated navigation renders.
@@ -65,8 +67,15 @@ export function useThreadListV2(input: {
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
+  readonly reconnectSnoozed: ReadonlySet<EnvironmentId>;
 }) {
   const { threads, workingShelfEnabled } = input;
+  const { reconnectSnoozed } = input;
+  // Matches buildThreadListV2Items: search and an environment filter still list a snoozed one.
+  const hiddenEnvironmentIds =
+    input.searchQuery.trim().length > 0 || input.environmentId !== null
+      ? NO_HIDDEN_ENVIRONMENTS
+      : reconnectSnoozed;
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
@@ -121,8 +130,9 @@ export function useThreadListV2(input: {
         environmentId: input.environmentId,
         projectRefs: input.projectRefs,
         settlementEnvironmentIds: input.settlementEnvironmentIds,
+        hiddenEnvironmentIds,
       }),
-    [input.environmentId, input.projectRefs, input.settlementEnvironmentIds],
+    [input.environmentId, input.projectRefs, input.settlementEnvironmentIds, hiddenEnvironmentIds],
   );
   const olderSettledShelf = useOlderSettledShelf({
     scopes,
@@ -153,6 +163,7 @@ export function useThreadListV2(input: {
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
         isListedSettled: isListed,
+        reconnectSnoozedEnvironmentIds: reconnectSnoozed,
         unloadedSettledCount: unloadedCount(
           threads.filter(
             (thread) =>
@@ -187,6 +198,7 @@ export function useThreadListV2(input: {
       isListed,
       unloadedCount,
       scopes,
+      reconnectSnoozed,
     ],
   );
   useOlderSettledShelfGrowth(olderSettledShelf, layout.listedSettledThreads);
@@ -202,13 +214,20 @@ export function useThreadListV2(input: {
     return input.pendingTasks.filter(
       (pendingTask) =>
         (input.environmentId === null || pendingTask.environmentId === input.environmentId) &&
+        !hiddenEnvironmentIds.has(pendingTask.environmentId) &&
         (scopedProjectKeys === null ||
           scopedProjectKeys.has(
             scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
           )) &&
         (searchQuery.length === 0 || pendingTask.title.toLocaleLowerCase().includes(searchQuery)),
     );
-  }, [input.projectRefs, input.searchQuery, input.pendingTasks, input.environmentId]);
+  }, [
+    input.projectRefs,
+    input.searchQuery,
+    input.pendingTasks,
+    input.environmentId,
+    hiddenEnvironmentIds,
+  ]);
   const items = useMemo(
     () =>
       buildThreadListV2ListItems({
@@ -250,9 +269,12 @@ function olderSettledScopes(input: {
   readonly environmentId: EnvironmentId | null;
   readonly projectRefs: LayoutInput["projectRefs"];
   readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly hiddenEnvironmentIds: ReadonlySet<EnvironmentId>;
 }): ReadonlyArray<OlderSettledScope> {
   const environmentIds =
-    input.environmentId === null ? [...input.settlementEnvironmentIds] : [input.environmentId];
+    input.environmentId === null
+      ? [...input.settlementEnvironmentIds].filter((id) => !input.hiddenEnvironmentIds.has(id))
+      : [input.environmentId];
   return environmentIds.flatMap((environmentId): ReadonlyArray<OlderSettledScope> => {
     if (input.projectRefs == null) return [{ environmentId, projectIds: null }];
     const projectIds = input.projectRefs.flatMap((ref) =>

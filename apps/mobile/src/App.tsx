@@ -1,4 +1,5 @@
 import { installPermissionUpdateNotice } from "./features/connection/permissionUpdateNotice";
+import { installReconnectSnoozeClearing } from "./state/reconnectSnoozeClearing";
 import { installComposerAttachmentUploads } from "./state/composer-attachment-uploads";
 import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
@@ -192,6 +193,7 @@ const appServiceDisposers = [
   installAppearanceRuntime(),
   installSubscriptionUsageRefresh(),
   installPermissionUpdateNotice(),
+  installReconnectSnoozeClearing(),
   installThreadOutboxDelivery(),
   installComposerAttachmentUploads(),
   startIncomingShareInbox(),

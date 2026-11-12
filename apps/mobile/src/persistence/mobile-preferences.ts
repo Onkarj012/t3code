@@ -80,6 +80,7 @@ const WorkspaceSelections = Schema.Struct({
 export type WorkspaceSelections = typeof WorkspaceSelections.Type;
 
 const isThreadListFilters = Schema.is(ThreadListFilters);
+const isEnvironmentIdList = Schema.is(Schema.Array(EnvironmentId));
 const isWorkspaceSelections = Schema.is(WorkspaceSelections);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 const ThreadProject = Schema.Struct({
@@ -130,6 +131,8 @@ export interface Preferences {
   readonly threadListSnoozedShelfExpanded?: boolean;
   readonly threadListWorkingShelfExpanded?: boolean;
   readonly threadListFilters?: ThreadListFilters;
+  /** Environments whose threads stay hidden until they next connect. */
+  readonly reconnectSnoozedEnvironmentIds?: ReadonlyArray<EnvironmentId>;
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
 }
@@ -212,6 +215,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSnoozedShelfExpanded?: boolean;
     threadListWorkingShelfExpanded?: boolean;
     threadListFilters?: ThreadListFilters;
+    reconnectSnoozedEnvironmentIds?: ReadonlyArray<EnvironmentId>;
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
   } = {};
@@ -362,6 +366,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isThreadListFilters(parsed.threadListFilters)) {
     preferences.threadListFilters = parsed.threadListFilters;
+  }
+  if (isEnvironmentIdList(parsed.reconnectSnoozedEnvironmentIds)) {
+    preferences.reconnectSnoozedEnvironmentIds = parsed.reconnectSnoozedEnvironmentIds;
   }
   if (isPullRequestListPreferences(parsed.pullRequestListFilters)) {
     preferences.pullRequestListFilters = parsed.pullRequestListFilters;

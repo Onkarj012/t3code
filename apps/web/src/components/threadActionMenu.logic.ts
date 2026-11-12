@@ -5,6 +5,7 @@ export type ThreadActionMenuId =
   | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
+  | "hide-environment"
   | "turn-into-project"
   | "project-settings"
   | "pin"
@@ -95,6 +96,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** The thread's device label while it is disconnected, so its threads can hide until it returns. */
+  readonly disconnectedEnvironmentLabel?: string | null;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -103,6 +106,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "find",
     "new-thread-on-branch",
     "project-settings",
+    "hide-environment",
     "mark-unread",
     "share-guest",
     "copy",
@@ -190,6 +194,14 @@ export function buildThreadActionMenuItems(
               ? "Show all projects"
               : `Filter by ${state.projectFilter.label}`,
             icon: "folder-tree",
+          },
+        ]
+      : []),
+    ...(state.disconnectedEnvironmentLabel
+      ? [
+          {
+            id: "hide-environment" as const,
+            label: `Hide ${state.disconnectedEnvironmentLabel} until it reconnects`,
           },
         ]
       : []),

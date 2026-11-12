@@ -15,7 +15,11 @@ import {
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type * as RpcSession from "../rpc/session.ts";
-import { createEnvironmentCatalogAtoms } from "./connections.ts";
+import {
+  createEnvironmentCatalogAtoms,
+  reconnectSnoozesToClear,
+  withoutReconnectSnoozed,
+} from "./connections.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("catalog-environment");
 
@@ -119,4 +123,27 @@ describe("environment catalog atoms", () => {
       }),
     ),
   );
+});
+
+describe("reconnect snooze", () => {
+  const offline = EnvironmentId.make("offline-device");
+  const online = EnvironmentId.make("online-device");
+  const threads = [
+    { environmentId: offline, id: "pinned", pinnedAt: "2026-01-01T00:00:00.000Z" },
+    { environmentId: offline, id: "open", pinnedAt: null },
+    { environmentId: online, id: "other", pinnedAt: null },
+  ];
+
+  it("hides every row of a snoozed environment except the kept one", () => {
+    expect(
+      withoutReconnectSnoozed(threads, new Set([offline]), (thread) => thread.id === "open").map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["open", "other"]);
+  });
+
+  it("clears only snoozed environments that are connected", () => {
+    expect(reconnectSnoozesToClear(new Set([offline]), [online])).toEqual([]);
+    expect(reconnectSnoozesToClear(new Set([offline]), [online, offline])).toEqual([offline]);
+  });
 });

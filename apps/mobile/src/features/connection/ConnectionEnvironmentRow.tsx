@@ -20,6 +20,11 @@ import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
 import { environmentPresentations } from "../../state/presentation";
+import {
+  showReconnectSnoozed,
+  snoozeUntilReconnect,
+  useReconnectSnoozed,
+} from "../../state/reconnectSnooze";
 import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
@@ -64,6 +69,8 @@ export function ConnectionEnvironmentRow(props: {
     presentation,
   );
   const enabled = props.environment.isEnabled && !unsupported;
+  const threadsHidden = useReconnectSnoozed().has(props.environment.environmentId);
+  const canHideThreads = enabled && props.environment.connectionState !== "connected";
   const statusLabel = connectionStatusLabel(props.environment);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
@@ -154,6 +161,11 @@ export function ConnectionEnvironmentRow(props: {
               ) : null}
             </Text>
           ) : null}
+          {threadsHidden ? (
+            <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+              Threads hidden until it reconnects
+            </Text>
+          ) : null}
           {freeze ? (
             <Text
               className="text-xs text-warning-foreground"
@@ -234,6 +246,19 @@ export function ConnectionEnvironmentRow(props: {
               />
             </>
           )}
+
+          {threadsHidden || canHideThreads ? (
+            <Button
+              label={threadsHidden ? "Show threads now" : "Hide threads until it reconnects"}
+              tone="secondary"
+              fullWidth
+              onPress={() =>
+                threadsHidden
+                  ? showReconnectSnoozed(props.environment.environmentId)
+                  : snoozeUntilReconnect(props.environment.environmentId)
+              }
+            />
+          ) : null}
 
           {Platform.OS === "android" ? (
             <View className="flex-row items-center justify-end gap-2">

@@ -460,6 +460,41 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(2);
   });
 
+  it("hides an environment snoozed until reconnect unless searched, filtered to, or open", () => {
+    const offline = EnvironmentId.make("offline-device");
+    const input = {
+      threads: [
+        makeThread({ id: ThreadId.make("here"), title: "Here" }),
+        makeThread({
+          id: ThreadId.make("pinned-away"),
+          title: "Away pinned",
+          environmentId: offline,
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({ id: ThreadId.make("open-away"), title: "Away open", environmentId: offline }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      reconnectSnoozedEnvironmentIds: new Set([offline]),
+    };
+    const ids = (layout: ReturnType<typeof buildThreadListV2Items>) =>
+      layout.items.map((item) => item.thread.id).toSorted();
+
+    expect(ids(buildThreadListV2Items(input))).toEqual(["here"]);
+    expect(
+      ids(buildThreadListV2Items({ ...input, selectedThreadKey: `${offline}:open-away` })),
+    ).toEqual(["here", "open-away"]);
+    expect(ids(buildThreadListV2Items({ ...input, searchQuery: "Away" }))).toEqual([
+      "open-away",
+      "pinned-away",
+    ]);
+    expect(ids(buildThreadListV2Items({ ...input, environmentId: offline }))).toEqual([
+      "open-away",
+      "pinned-away",
+    ]);
+  });
+
   it("keeps snoozed threads visible on environments without the snooze capability", () => {
     const layout = buildThreadListV2Items({
       threads: [
